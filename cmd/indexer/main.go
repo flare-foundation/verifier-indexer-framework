@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/alexflint/go-arg"
+	"github.com/pkg/errors"
 	"gitlab.com/ryancollingham/flare-common/pkg/logger"
 	"gitlab.com/ryancollingham/flare-indexer-framework/internal/config"
 	"gitlab.com/ryancollingham/flare-indexer-framework/internal/indexer"
@@ -30,7 +31,10 @@ func run(ctx context.Context, args CLIArgs) error {
 		return err
 	}
 
-	indexer := indexer.New(cfg)
+	indexer, err := indexer.New(cfg)
+	if err != nil {
+		return errors.Wrap(err, "indexer.New")
+	}
 
 	return indexer.Run(ctx)
 }
