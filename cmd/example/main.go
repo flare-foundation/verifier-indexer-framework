@@ -2,51 +2,33 @@ package main
 
 import (
 	"context"
+	"errors"
 
-	"github.com/alexflint/go-arg"
 	"gitlab.com/ryancollingham/flare-common/pkg/logger"
-	"gitlab.com/ryancollingham/flare-indexer-framework/pkg/blockchain"
-	"gitlab.com/ryancollingham/flare-indexer-framework/pkg/config"
-	"gitlab.com/ryancollingham/flare-indexer-framework/pkg/database"
+	"gitlab.com/ryancollingham/flare-indexer-framework/pkg/framework"
 	"gitlab.com/ryancollingham/flare-indexer-framework/pkg/indexer"
 )
 
 var log = logger.GetLogger()
 
-type CLIArgs struct {
-	ConfigFile string `arg:"--config,env:CONFIG_FILE" default:"config.toml"`
-}
-
-type Config struct {
-	config.BaseConfig
-	Blockchain blockchain.ExampleConfig
-}
-
 func main() {
-	var args CLIArgs
-	arg.MustParse(&args)
-
-	if err := run(context.Background(), args); err != nil {
+	if err := framework.Run(NewExample, new(ExampleConfig)); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func run(ctx context.Context, args CLIArgs) error {
-	cfg := Config{
-		BaseConfig: config.DefaultBaseConfig,
-	}
-	if err := config.ReadFile(args.ConfigFile, &cfg); err != nil {
-		return err
-	}
+type ExampleBlockchain struct{}
 
-	db, err := database.New(&cfg.DB)
-	if err != nil {
-		return err
-	}
-
-	bc := blockchain.NewExample(&cfg.Blockchain)
-
-	indexer := indexer.New(&cfg.Indexer, db, bc)
-
-	return indexer.Run(ctx)
+func NewExample(cfg *ExampleConfig) indexer.BlockchainClient {
+	return ExampleBlockchain{}
 }
+
+func (e ExampleBlockchain) GetLatestBlockNumber(context.Context) (uint64, error) {
+	return 0, errors.New("not implemented")
+}
+
+func (e ExampleBlockchain) GetBlockResult(context.Context, uint64) (*indexer.BlockResult, error) {
+	return nil, errors.New("not implemented")
+}
+
+type ExampleConfig struct{}
