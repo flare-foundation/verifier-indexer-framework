@@ -2,22 +2,17 @@ package config
 
 import "github.com/BurntSushi/toml"
 
-func ReadFile(filepath string) (*Config, error) {
-	cfg := defaultConfig
-
-	if _, err := toml.DecodeFile(filepath, cfg); err != nil {
-		return nil, err
-	}
-
-	return &cfg, nil
+func ReadFile(filepath string, cfg interface{}) error {
+	_, err := toml.DecodeFile(filepath, cfg)
+	return err
 }
 
-type Config struct {
+type BaseConfig struct {
 	DB      DB      `toml:"db"`
 	Indexer Indexer `toml:"indexer"`
 }
 
-var defaultConfig = Config{
+var DefaultBaseConfig = BaseConfig{
 	DB:      defaultDB,
 	Indexer: defaultIndexer,
 }

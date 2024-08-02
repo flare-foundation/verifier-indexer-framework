@@ -6,7 +6,7 @@ import (
 	"fmt"
 
 	"github.com/go-sql-driver/mysql"
-	"gitlab.com/ryancollingham/flare-indexer-framework/internal/config"
+	"gitlab.com/ryancollingham/flare-indexer-framework/pkg/config"
 	gormmysql "gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
