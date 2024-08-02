@@ -1,6 +1,8 @@
 package database
 
 import (
+	"context"
+	"errors"
 	"fmt"
 
 	"github.com/go-sql-driver/mysql"
@@ -13,6 +15,7 @@ import (
 const (
 	tcp                  = "tcp"
 	transactionBatchSize = 1000
+	globalStateID        = 1
 )
 
 func New(cfg *config.DB) (*DB, error) {
@@ -21,7 +24,7 @@ func New(cfg *config.DB) (*DB, error) {
 		return nil, err
 	}
 
-	return &DB{db: db}, err
+	return &DB{g: db}, err
 }
 
 func connect(cfg *config.DB) (*gorm.DB, error) {
@@ -59,5 +62,27 @@ func formatDSN(cfg *config.DB) string {
 }
 
 type DB struct {
-	db *gorm.DB
+	g *gorm.DB
+}
+
+func (db *DB) GetState(ctx context.Context) (*State, error) {
+	state := new(State)
+
+	if err := db.g.WithContext(ctx).First(state, globalStateID).Error; err != nil {
+		return nil, err
+	}
+
+	return state, nil
+}
+
+func (db *DB) StoreState(ctx context.Context, state *State) error {
+	return db.g.Save(state).Error
+}
+
+func (db *DB) SaveBlocksBatch(ctx context.Context, blocks []*Block) error {
+	return errors.New("not implemented")
+}
+
+func (db *DB) SaveTransactionsBatch(ctx context.Context, transactions []*Transaction) error {
+	return errors.New("not implemented")
 }

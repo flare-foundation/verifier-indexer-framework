@@ -4,9 +4,10 @@ import (
 	"context"
 
 	"github.com/alexflint/go-arg"
-	"github.com/pkg/errors"
 	"gitlab.com/ryancollingham/flare-common/pkg/logger"
+	"gitlab.com/ryancollingham/flare-indexer-framework/internal/blockchain"
 	"gitlab.com/ryancollingham/flare-indexer-framework/internal/config"
+	"gitlab.com/ryancollingham/flare-indexer-framework/internal/database"
 	"gitlab.com/ryancollingham/flare-indexer-framework/internal/indexer"
 )
 
@@ -31,10 +32,14 @@ func run(ctx context.Context, args CLIArgs) error {
 		return err
 	}
 
-	indexer, err := indexer.New(cfg)
+	db, err := database.New(&cfg.DB)
 	if err != nil {
-		return errors.Wrap(err, "indexer.New")
+		return err
 	}
+
+	bc := blockchain.NewExample()
+
+	indexer := indexer.New(&cfg.Indexer, db, bc)
 
 	return indexer.Run(ctx)
 }
