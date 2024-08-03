@@ -7,9 +7,9 @@ require (
 	github.com/alexflint/go-arg v1.5.1
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/go-sql-driver/mysql v1.8.1
-	github.com/pkg/errors v0.9.1
 	gitlab.com/ryancollingham/flare-common v0.0.0-20240730151714-1170f15b9186
 	golang.org/x/sync v0.7.0
+	gorm.io/datatypes v1.2.1
 	gorm.io/driver/mysql v1.5.6
 	gorm.io/gorm v1.25.11
 )
