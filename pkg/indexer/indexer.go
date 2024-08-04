@@ -137,8 +137,8 @@ func (ix *Indexer) indexBlockRange(ctx context.Context, blkRange *blockRange) er
 }
 
 type BlockResult struct {
-	block        *database.Block
-	transactions []database.Transaction
+	Block        *database.Block
+	Transactions []database.Transaction
 }
 
 func (ix *Indexer) getBlockResults(
@@ -191,9 +191,9 @@ func (ix *Indexer) saveResults(ctx context.Context, results []BlockResult) error
 	var transactions []*database.Transaction
 
 	for i := range results {
-		blocks[i] = results[i].block
+		blocks[i] = results[i].Block
 
-		resTxs := results[i].transactions
+		resTxs := results[i].Transactions
 		for j := range resTxs {
 			transactions = append(transactions, &resTxs[j])
 		}
