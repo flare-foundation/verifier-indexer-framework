@@ -44,6 +44,8 @@ func (ix *Indexer) Run(ctx context.Context) error {
 		return err
 	}
 
+	upToDateBackoff := backoff.NewExponentialBackOff()
+
 	for {
 		err := backoff.RetryNotify(
 			func() error {
@@ -51,6 +53,13 @@ func (ix *Indexer) Run(ctx context.Context) error {
 				if err != nil {
 					return err
 				}
+
+				if newState == nil {
+					time.Sleep(upToDateBackoff.NextBackOff())
+					return nil
+				}
+
+				upToDateBackoff.Reset()
 
 				if err := ix.db.StoreState(ctx, newState); err != nil {
 					return err
@@ -74,6 +83,10 @@ func (ix *Indexer) runIteration(ctx context.Context, state *database.State) (*da
 	blkRange, err := ix.getBlockRange(ctx, state)
 	if err != nil {
 		return nil, err
+	}
+
+	if blkRange.len() == 0 {
+		return nil, nil
 	}
 
 	if err := ix.indexBlockRange(ctx, blkRange); err != nil {
