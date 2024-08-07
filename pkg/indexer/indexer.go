@@ -119,6 +119,10 @@ func (ix *Indexer) getBlockRange(ctx context.Context, state *database.State) (*b
 }
 
 func (ix *Indexer) getStartBlock(state *database.State) uint64 {
+	if state == nil {
+		return ix.startBlockNumber
+	}
+
 	if state.LastIndexedBlockNumber < ix.startBlockNumber {
 		return ix.startBlockNumber
 	}
@@ -224,7 +228,10 @@ func (ix *Indexer) saveResults(ctx context.Context, results []BlockResult) error
 }
 
 func updateState(state *database.State, blkRange *blockRange) *database.State {
-	newState := *state
+	var newState database.State
+	if state != nil {
+		newState = *state
+	}
 
 	newState.LastIndexedBlockNumber = blkRange.end
 	newState.UpdatedAt = time.Now()

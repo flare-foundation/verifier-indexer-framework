@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/go-sql-driver/mysql"
+	"gitlab.com/ryancollingham/flare-common/pkg/logger"
 	"gitlab.com/ryancollingham/flare-indexer-framework/pkg/config"
 	gormmysql "gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -18,15 +19,21 @@ const (
 	globalStateID        = 1
 )
 
+var log = logger.GetLogger()
+
 func New(cfg *config.DB) (*DB, error) {
 	db, err := connect(cfg)
 	if err != nil {
 		return nil, err
 	}
 
+	log.Debug("Connected to the DB")
+
 	if err := db.AutoMigrate(entities...); err != nil {
 		return nil, err
 	}
+
+	log.Debug("Migrated DB entities")
 
 	return &DB{g: db}, err
 }
@@ -73,6 +80,10 @@ func (db *DB) GetState(ctx context.Context) (*State, error) {
 	state := new(State)
 
 	if err := db.g.WithContext(ctx).First(state, globalStateID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+
 		return nil, err
 	}
 
