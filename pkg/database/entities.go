@@ -6,6 +6,12 @@ import (
 	"gorm.io/datatypes"
 )
 
+var entities = []interface{}{
+	State{},
+	Block{},
+	Transaction{},
+}
+
 type State struct {
 	ID                     int `gorm:"primaryKey;unique"`
 	LastIndexedBlockNumber uint64

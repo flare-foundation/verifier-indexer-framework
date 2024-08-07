@@ -24,6 +24,10 @@ func New(cfg *config.DB) (*DB, error) {
 		return nil, err
 	}
 
+	if err := db.AutoMigrate(entities...); err != nil {
+		return nil, err
+	}
+
 	return &DB{g: db}, err
 }
 
