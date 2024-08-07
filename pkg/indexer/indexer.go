@@ -89,7 +89,7 @@ func (ix *Indexer) runIteration(ctx context.Context, state *database.State) (*da
 		return nil, nil
 	}
 
-	log.Debug("indexing from block %d to %d", blkRange.start, blkRange.end)
+	log.Debugf("indexing from block %d to %d", blkRange.start, blkRange.end)
 
 	if err := ix.indexBlockRange(ctx, blkRange); err != nil {
 		return nil, err
@@ -237,7 +237,7 @@ func updateState(state *database.State, blkRange *blockRange) *database.State {
 		newState = *state
 	}
 
-	newState.LastIndexedBlockNumber = blkRange.end
+	newState.LastIndexedBlockNumber = blkRange.end - 1
 	newState.UpdatedAt = time.Now()
 
 	return &newState
