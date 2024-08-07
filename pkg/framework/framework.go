@@ -13,7 +13,7 @@ type CLIArgs struct {
 	ConfigFile string `arg:"--config,env:CONFIG_FILE" default:"config.toml"`
 }
 
-func Run[T any](newBlockchain func(T) indexer.BlockchainClient, defaultConfig T) error {
+func Run[T any](newBlockchain func(T) (indexer.BlockchainClient, error), defaultConfig T) error {
 	var args CLIArgs
 	arg.MustParse(&args)
 
@@ -35,7 +35,10 @@ func Run[T any](newBlockchain func(T) indexer.BlockchainClient, defaultConfig T)
 		return err
 	}
 
-	bc := newBlockchain(cfg.Blockchain)
+	bc, err := newBlockchain(cfg.Blockchain)
+	if err != nil {
+		return err
+	}
 
 	indexer := indexer.New(&cfg.Indexer, db, bc)
 

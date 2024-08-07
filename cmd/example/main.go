@@ -19,8 +19,8 @@ func main() {
 
 type ExampleBlockchain struct{}
 
-func NewExample(cfg *ExampleConfig) indexer.BlockchainClient {
-	return ExampleBlockchain{}
+func NewExample(cfg *ExampleConfig) (indexer.BlockchainClient, error) {
+	return ExampleBlockchain{}, nil
 }
 
 func (e ExampleBlockchain) GetLatestBlockNumber(context.Context) (uint64, error) {
