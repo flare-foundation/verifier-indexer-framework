@@ -89,6 +89,8 @@ func (ix *Indexer) runIteration(ctx context.Context, state *database.State) (*da
 		return nil, nil
 	}
 
+	log.Debug("indexing from block %d to %d", blkRange.start, blkRange.end)
+
 	if err := ix.indexBlockRange(ctx, blkRange); err != nil {
 		return nil, err
 	}
