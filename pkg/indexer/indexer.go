@@ -231,7 +231,9 @@ func (ix *Indexer) saveResults(ctx context.Context, results []BlockResult) error
 
 func updateState(state *database.State, blkRange *blockRange) *database.State {
 	var newState database.State
-	if state != nil {
+	if state == nil {
+		newState = database.InitState()
+	} else {
 		newState = *state
 	}
 

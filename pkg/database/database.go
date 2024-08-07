@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/go-sql-driver/mysql"
 	"gitlab.com/ryancollingham/flare-common/pkg/logger"
 	"gitlab.com/ryancollingham/flare-indexer-framework/pkg/config"
 	gormmysql "gorm.io/driver/mysql"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	gormlogger "gorm.io/gorm/logger"
 )
 
@@ -90,14 +92,28 @@ func (db *DB) GetState(ctx context.Context) (*State, error) {
 	return state, nil
 }
 
+func InitState() State {
+	return State{
+		ID:        globalStateID,
+		UpdatedAt: time.Now(),
+	}
+}
+
 func (db *DB) StoreState(ctx context.Context, state *State) error {
 	return db.g.Save(state).Error
 }
 
 func (db *DB) SaveBlocksBatch(ctx context.Context, blocks []*Block) error {
-	return errors.New("not implemented")
+	return db.saveBatch(ctx, blocks)
 }
 
 func (db *DB) SaveTransactionsBatch(ctx context.Context, transactions []*Transaction) error {
-	return errors.New("not implemented")
+	return db.saveBatch(ctx, transactions)
+}
+
+func (db *DB) saveBatch(ctx context.Context, items interface{}) error {
+	return db.g.WithContext(ctx).
+		Clauses(clause.OnConflict{DoNothing: true}).
+		Create(items).
+		Error
 }
