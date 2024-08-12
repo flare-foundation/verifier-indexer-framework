@@ -2,14 +2,11 @@ package database
 
 import (
 	"time"
-
-	"gorm.io/datatypes"
 )
 
-var entities = []interface{}{
-	State{},
-	Block{},
-	Transaction{},
+type ExternalEntities struct {
+	Block       interface{}
+	Transaction interface{}
 }
 
 type State struct {
@@ -18,23 +15,13 @@ type State struct {
 	UpdatedAt              time.Time
 }
 
-type Block struct {
+type BaseBlock struct {
 	Hash      string `gorm:"primaryKey;type:varchar(66)"`
 	Number    uint64 `gorm:"index"`
 	Timestamp uint64 `gorm:"index"`
-
-	// Any extra chain-specific data goes here.
-	ChainAttributes datatypes.JSON
 }
 
-type Transaction struct {
-	Hash        string `gorm:"primaryKey;type:varchar(66)"`
-	BlockHash   string `gorm:"type:varchar(66)"`
-	Block       *Block
-	FromAddress string `gorm:"type:varchar(42);index"`
-	ToAddress   string `gorm:"type:varchar(42);index"`
-	Timestamp   uint64 `gorm:"index"`
-
-	// Any extra chain-specific data goes here.
-	ChainAttributes datatypes.JSON
+type BaseTransaction struct {
+	Hash      string `gorm:"primaryKey;type:varchar(66)"`
+	Timestamp uint64 `gorm:"index"`
 }

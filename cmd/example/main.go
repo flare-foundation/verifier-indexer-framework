@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"gitlab.com/ryancollingham/flare-common/pkg/logger"
+	"gitlab.com/ryancollingham/flare-indexer-framework/pkg/database"
 	"gitlab.com/ryancollingham/flare-indexer-framework/pkg/framework"
 	"gitlab.com/ryancollingham/flare-indexer-framework/pkg/indexer"
 )
@@ -12,7 +13,16 @@ import (
 var log = logger.GetLogger()
 
 func main() {
-	if err := framework.Run(NewExample, new(ExampleConfig)); err != nil {
+	input := framework.Input[*ExampleConfig]{
+		DefaultConfig: new(ExampleConfig),
+		Entities: database.ExternalEntities{
+			Block:       new(dbBlock),
+			Transaction: new(dbTransaction),
+		},
+		NewBlockchain: NewExample,
+	}
+
+	if err := framework.Run(input); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -32,3 +42,6 @@ func (e ExampleBlockchain) GetBlockResult(context.Context, uint64) (*indexer.Blo
 }
 
 type ExampleConfig struct{}
+
+type dbBlock struct{}
+type dbTransaction struct{}

@@ -23,7 +23,7 @@ const (
 
 var log = logger.GetLogger()
 
-func New(cfg *config.DB) (*DB, error) {
+func New(cfg *config.DB, entities ExternalEntities) (*DB, error) {
 	db, err := connect(cfg)
 	if err != nil {
 		return nil, err
@@ -31,7 +31,7 @@ func New(cfg *config.DB) (*DB, error) {
 
 	log.Debug("Connected to the DB")
 
-	if err := db.AutoMigrate(entities...); err != nil {
+	if err := db.AutoMigrate(State{}, entities.Block, entities.Transaction); err != nil {
 		return nil, err
 	}
 
@@ -103,15 +103,7 @@ func (db *DB) StoreState(ctx context.Context, state *State) error {
 	return db.g.Save(state).Error
 }
 
-func (db *DB) SaveBlocksBatch(ctx context.Context, blocks []*Block) error {
-	return db.saveBatch(ctx, blocks)
-}
-
-func (db *DB) SaveTransactionsBatch(ctx context.Context, transactions []*Transaction) error {
-	return db.saveBatch(ctx, transactions)
-}
-
-func (db *DB) saveBatch(ctx context.Context, items interface{}) error {
+func (db *DB) SaveBatch(ctx context.Context, items interface{}) error {
 	return db.g.WithContext(ctx).
 		Clauses(clause.OnConflict{DoNothing: true}).
 		Create(items).

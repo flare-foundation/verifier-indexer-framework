@@ -156,8 +156,8 @@ func (ix *Indexer) indexBlockRange(ctx context.Context, blkRange *blockRange) er
 }
 
 type BlockResult struct {
-	Block        *database.Block
-	Transactions []database.Transaction
+	Block        interface{}
+	Transactions []interface{}
 }
 
 func (ix *Indexer) getBlockResults(
@@ -206,8 +206,8 @@ func (ix *Indexer) getBlockResults(
 }
 
 func (ix *Indexer) saveResults(ctx context.Context, results []BlockResult) error {
-	blocks := make([]*database.Block, len(results))
-	var transactions []*database.Transaction
+	blocks := make([]interface{}, len(results))
+	var transactions []interface{}
 
 	for i := range results {
 		blocks[i] = results[i].Block
@@ -218,11 +218,11 @@ func (ix *Indexer) saveResults(ctx context.Context, results []BlockResult) error
 		}
 	}
 
-	if err := ix.db.SaveBlocksBatch(ctx, blocks); err != nil {
+	if err := ix.db.SaveBatch(ctx, blocks); err != nil {
 		return err
 	}
 
-	if err := ix.db.SaveTransactionsBatch(ctx, transactions); err != nil {
+	if err := ix.db.SaveBatch(ctx, transactions); err != nil {
 		return err
 	}
 
