@@ -13,8 +13,10 @@ import (
 
 var log = logger.GetLogger()
 
-func New(cfg *config.Indexer, db *database.DB, blockchain BlockchainClient) Indexer {
-	return Indexer{
+func New[B any, T any](
+	cfg *config.Indexer, db *database.DB, blockchain BlockchainClient[B, T],
+) Indexer[B, T] {
+	return Indexer[B, T]{
 		blockchain:       blockchain,
 		confirmations:    cfg.Confirmations,
 		db:               db,
@@ -24,8 +26,8 @@ func New(cfg *config.Indexer, db *database.DB, blockchain BlockchainClient) Inde
 	}
 }
 
-type Indexer struct {
-	blockchain       BlockchainClient
+type Indexer[B any, T any] struct {
+	blockchain       BlockchainClient[B, T]
 	confirmations    uint64
 	db               *database.DB
 	maxBlockRange    uint64
@@ -33,12 +35,12 @@ type Indexer struct {
 	startBlockNumber uint64
 }
 
-type BlockchainClient interface {
+type BlockchainClient[B any, T any] interface {
 	GetLatestBlockNumber(context.Context) (uint64, error)
-	GetBlockResult(context.Context, uint64) (*BlockResult, error)
+	GetBlockResult(context.Context, uint64) (*BlockResult[B, T], error)
 }
 
-func (ix *Indexer) Run(ctx context.Context) error {
+func (ix *Indexer[B, T]) Run(ctx context.Context) error {
 	state, err := ix.db.GetState(ctx)
 	if err != nil {
 		return err
@@ -79,7 +81,7 @@ func (ix *Indexer) Run(ctx context.Context) error {
 	}
 }
 
-func (ix *Indexer) runIteration(ctx context.Context, state *database.State) (*database.State, error) {
+func (ix *Indexer[B, T]) runIteration(ctx context.Context, state *database.State) (*database.State, error) {
 	blkRange, err := ix.getBlockRange(ctx, state)
 	if err != nil {
 		return nil, err
@@ -107,7 +109,7 @@ func (br blockRange) len() uint64 {
 	return br.end - br.start
 }
 
-func (ix *Indexer) getBlockRange(ctx context.Context, state *database.State) (*blockRange, error) {
+func (ix *Indexer[B, T]) getBlockRange(ctx context.Context, state *database.State) (*blockRange, error) {
 	latestBlockNumber, err := ix.blockchain.GetLatestBlockNumber(ctx)
 	if err != nil {
 		return nil, err
@@ -120,7 +122,7 @@ func (ix *Indexer) getBlockRange(ctx context.Context, state *database.State) (*b
 	return result, nil
 }
 
-func (ix *Indexer) getStartBlock(state *database.State) uint64 {
+func (ix *Indexer[B, T]) getStartBlock(state *database.State) uint64 {
 	if state == nil {
 		return ix.startBlockNumber
 	}
@@ -132,7 +134,7 @@ func (ix *Indexer) getStartBlock(state *database.State) uint64 {
 	return state.LastIndexedBlockNumber + 1
 }
 
-func (ix *Indexer) getEndBlock(start uint64, latest uint64) uint64 {
+func (ix *Indexer[B, T]) getEndBlock(start uint64, latest uint64) uint64 {
 	latestConfirmedNum := latest - ix.confirmations
 	if latestConfirmedNum < start {
 		return latestConfirmedNum + 1
@@ -146,7 +148,7 @@ func (ix *Indexer) getEndBlock(start uint64, latest uint64) uint64 {
 	return latestConfirmedNum + 1
 }
 
-func (ix *Indexer) indexBlockRange(ctx context.Context, blkRange *blockRange) error {
+func (ix *Indexer[B, T]) indexBlockRange(ctx context.Context, blkRange *blockRange) error {
 	results, err := ix.getBlockResults(ctx, blkRange)
 	if err != nil {
 		return err
@@ -155,14 +157,14 @@ func (ix *Indexer) indexBlockRange(ctx context.Context, blkRange *blockRange) er
 	return ix.saveResults(ctx, results)
 }
 
-type BlockResult struct {
-	Block        interface{}
-	Transactions []interface{}
+type BlockResult[B any, T any] struct {
+	Block        B
+	Transactions []T
 }
 
-func (ix *Indexer) getBlockResults(
+func (ix *Indexer[B, T]) getBlockResults(
 	ctx context.Context, blkRange *blockRange,
-) ([]BlockResult, error) {
+) ([]BlockResult[B, T], error) {
 	sem := make(chan struct{}, ix.maxConcurrency)
 	eg, ctx := errgroup.WithContext(ctx)
 
@@ -171,7 +173,7 @@ func (ix *Indexer) getBlockResults(
 		return nil, nil
 	}
 
-	results := make([]BlockResult, l)
+	results := make([]BlockResult[B, T], l)
 	bOff := backoff.NewExponentialBackOff()
 
 	for i := blkRange.start; i < blkRange.end; i++ {
@@ -205,12 +207,12 @@ func (ix *Indexer) getBlockResults(
 	return results, nil
 }
 
-func (ix *Indexer) saveResults(ctx context.Context, results []BlockResult) error {
-	blocks := make([]interface{}, len(results))
-	var transactions []interface{}
+func (ix *Indexer[B, T]) saveResults(ctx context.Context, results []BlockResult[B, T]) error {
+	blocks := make([]*B, len(results))
+	var transactions []*T
 
 	for i := range results {
-		blocks[i] = results[i].Block
+		blocks[i] = &results[i].Block
 
 		resTxs := results[i].Transactions
 		for j := range resTxs {
