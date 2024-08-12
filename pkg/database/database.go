@@ -49,6 +49,8 @@ func connect(cfg *config.DB) (*gorm.DB, error) {
 		CreateBatchSize: transactionBatchSize,
 	}
 
+	log.Debug("Connecting to DB: %s", dsn)
+
 	return gorm.Open(postgres.Open(dsn), &gormCfg)
 }
 
