@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"time"
 
-	"github.com/go-sql-driver/mysql"
 	"gitlab.com/ryancollingham/flare-common/pkg/logger"
 	"gitlab.com/ryancollingham/flare-indexer-framework/pkg/config"
-	gormmysql "gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	gormlogger "gorm.io/gorm/logger"
@@ -49,7 +49,7 @@ func connect(cfg *config.DB) (*gorm.DB, error) {
 		CreateBatchSize: transactionBatchSize,
 	}
 
-	return gorm.Open(gormmysql.Open(dsn), &gormCfg)
+	return gorm.Open(postgres.Open(dsn), &gormCfg)
 }
 
 func getGormLogLevel(cfg *config.DB) gormlogger.LogLevel {
@@ -61,17 +61,14 @@ func getGormLogLevel(cfg *config.DB) gormlogger.LogLevel {
 }
 
 func formatDSN(cfg *config.DB) string {
-	dbCfg := mysql.Config{
-		User:                 cfg.Username,
-		Passwd:               cfg.Password,
-		Net:                  "tcp",
-		Addr:                 fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
-		DBName:               cfg.DBName,
-		AllowNativePasswords: true,
-		ParseTime:            true,
+	u := url.URL{
+		Scheme: "postgres",
+		User:   url.UserPassword(cfg.Username, cfg.Password),
+		Host:   fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
+		Path:   cfg.DBName,
 	}
 
-	return dbCfg.FormatDSN()
+	return u.String()
 }
 
 type DB struct {
