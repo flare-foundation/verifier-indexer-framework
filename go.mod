@@ -1,12 +1,12 @@
 module gitlab.com/ryancollingham/flare-indexer-framework
 
-go 1.22.5
+go 1.23.0
 
 require (
 	github.com/BurntSushi/toml v1.4.0
 	github.com/alexflint/go-arg v1.5.1
 	github.com/cenkalti/backoff/v4 v4.3.0
-	gitlab.com/ryancollingham/flare-common v0.0.0-20240730151714-1170f15b9186
+	gitlab.com/ryancollingham/flare-common v0.0.0-20240829145248-3971860e0012
 	golang.org/x/sync v0.8.0
 	gorm.io/driver/postgres v1.5.9
 	gorm.io/gorm v1.25.11
