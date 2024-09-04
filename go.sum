@@ -29,8 +29,8 @@ github.com/stretchr/testify v1.3.0/go.mod h1:M5WIy9Dh21IEIfnGCwXGc5bZfKNJtfHm1UV
 github.com/stretchr/testify v1.7.0/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/h/Wwjteg=
 github.com/stretchr/testify v1.9.0 h1:HtqpIVDClZ4nwg75+f6Lvsy/wHu+3BoSGCbBAcpTsTg=
 github.com/stretchr/testify v1.9.0/go.mod h1:r2ic/lqez/lEtzL7wO/rwa5dbSLXVDPFyf8C91i36aY=
-gitlab.com/ryancollingham/flare-common v0.0.0-20240829145248-3971860e0012 h1:s7sZ5yJiWHW3btafzJdeC3kTgFPu8jHnjy143/kMLIk=
-gitlab.com/ryancollingham/flare-common v0.0.0-20240829145248-3971860e0012/go.mod h1:KyZlYfIx/FSRbvw7I5f155TKMZ65qRBW4AW23Wp2zic=
+gitlab.com/flarenetwork/libs/go-flare-common v0.0.0-20240904083824-3a81e691aebf h1:9qnmMISyLff3/Fq30f8AabTq8rvKBN5LMojqVGnoEeM=
+gitlab.com/flarenetwork/libs/go-flare-common v0.0.0-20240904083824-3a81e691aebf/go.mod h1:1x6CiiAwzYaNvaloh49KMu18Ur60oe8OdlqNL7wU+r0=
 go.uber.org/goleak v1.3.0 h1:2K3zAYmnTNqV73imy9J1T3WC+gmCePx2hEGkimedGto=
 go.uber.org/goleak v1.3.0/go.mod h1:CoHD4mav9JJNrW/WLlf7HGZPjdw8EucARQHekz1X6bE=
 go.uber.org/multierr v1.11.0 h1:blXXJkSxSSfBVBlC76pxqeO+LN3aDfLQo+309xJstO0=

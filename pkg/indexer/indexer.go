@@ -7,7 +7,7 @@ import (
 	"github.com/cenkalti/backoff/v4"
 	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/config"
 	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/database"
-	"gitlab.com/ryancollingham/flare-common/pkg/logger"
+	"gitlab.com/flarenetwork/libs/go-flare-common/pkg/logger"
 	"golang.org/x/sync/errgroup"
 )
 
