@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"gitlab.com/ryancollingham/flare-common/pkg/logger"
-	"gitlab.com/ryancollingham/flare-indexer-framework/pkg/config"
+	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/config"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
