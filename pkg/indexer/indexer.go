@@ -5,9 +5,9 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/config"
+	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/database"
 	"gitlab.com/ryancollingham/flare-common/pkg/logger"
-	"gitlab.com/ryancollingham/flare-indexer-framework/pkg/config"
-	"gitlab.com/ryancollingham/flare-indexer-framework/pkg/database"
 	"golang.org/x/sync/errgroup"
 )
 

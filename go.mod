@@ -1,4 +1,4 @@
-module gitlab.com/ryancollingham/flare-indexer-framework
+module gitlab.com/flarenetwork/fdc/verifier-indexer-framework
 
 go 1.23.0
 

@@ -4,9 +4,9 @@ import (
 	"context"
 
 	"github.com/alexflint/go-arg"
-	"gitlab.com/ryancollingham/flare-indexer-framework/pkg/config"
-	"gitlab.com/ryancollingham/flare-indexer-framework/pkg/database"
-	"gitlab.com/ryancollingham/flare-indexer-framework/pkg/indexer"
+	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/config"
+	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/database"
+	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/indexer"
 )
 
 type CLIArgs struct {
