@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 
-	"gitlab.com/ryancollingham/flare-common/pkg/logger"
 	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/framework"
 	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/indexer"
+	"gitlab.com/ryancollingham/flare-common/pkg/logger"
 )
 
 var log = logger.GetLogger()
