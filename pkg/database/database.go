@@ -2,13 +2,12 @@ package database
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/url"
-	"time"
 
 	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/config"
 	"gitlab.com/flarenetwork/libs/go-flare-common/pkg/logger"
+
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -23,21 +22,35 @@ const (
 
 var log = logger.GetLogger()
 
-func New(cfg *config.DB, entities ExternalEntities) (*DB, error) {
+type ExternalEntities struct {
+	Block       interface{}
+	Transaction interface{}
+}
+
+func New(cfg *config.DB, entities ExternalEntities) (*gorm.DB, error) {
 	db, err := connect(cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	log.Debug("Connected to the DB")
+	log.Debug("connected to the DB")
+
+	if cfg.DropTableAtStart {
+		log.Info("DB tables dropped at start")
+
+		err = db.Migrator().DropTable(State{}, entities.Block, entities.Transaction)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	if err := db.AutoMigrate(State{}, entities.Block, entities.Transaction); err != nil {
 		return nil, err
 	}
 
-	log.Debug("Migrated DB entities")
+	log.Debug("migrated DB entities")
 
-	return &DB{g: db}, err
+	return db, err
 }
 
 func connect(cfg *config.DB) (*gorm.DB, error) {
@@ -71,38 +84,34 @@ func formatDSN(cfg *config.DB) string {
 	return u.String()
 }
 
-type DB struct {
-	g *gorm.DB
-}
-
-func (db *DB) GetState(ctx context.Context) (*State, error) {
-	state := new(State)
-
-	if err := db.g.WithContext(ctx).First(state, globalStateID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
+func SaveData[B, T any](db *gorm.DB, ctx context.Context, blocks []*B, transactions []*T, states map[string]*State) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		if len(blocks) != 0 {
+			err := tx.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).
+				Create(blocks).
+				Error
+			if err != nil {
+				return err
+			}
 		}
 
-		return nil, err
-	}
+		if len(transactions) != 0 {
+			err := tx.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).
+				Create(transactions).
+				Error
+			if err != nil {
+				return err
+			}
+		}
 
-	return state, nil
-}
-
-func InitState() State {
-	return State{
-		ID:        globalStateID,
-		UpdatedAt: time.Now(),
-	}
-}
-
-func (db *DB) StoreState(ctx context.Context, state *State) error {
-	return db.g.Save(state).Error
-}
-
-func (db *DB) SaveBatch(ctx context.Context, items interface{}) error {
-	return db.g.WithContext(ctx).
-		Clauses(clause.OnConflict{DoNothing: true}).
-		Create(items).
-		Error
+		if len(states) != 0 {
+			for _, state := range states {
+				err := tx.WithContext(ctx).Save(state).Error
+				if err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
 }

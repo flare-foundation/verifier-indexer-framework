@@ -8,27 +8,41 @@ func ReadFile(filepath string, cfg interface{}) error {
 }
 
 type BaseConfig struct {
-	DB      DB      `toml:"db"`
-	Indexer Indexer `toml:"indexer"`
+	DB      DB            `toml:"db"`
+	Indexer Indexer       `toml:"indexer"`
+	Timeout TimeoutConfig `toml:"timeout"`
 }
 
 var DefaultBaseConfig = BaseConfig{
 	DB:      defaultDB,
 	Indexer: defaultIndexer,
+	Timeout: defaultTimeout,
 }
 
 type DB struct {
-	Host       string `toml:"host"`
-	Port       int    `toml:"port"`
-	Username   string `toml:"username"`
-	Password   string `toml:"password"`
-	DBName     string `toml:"db_name"`
-	LogQueries bool   `toml:"log_queries"`
+	Host             string `toml:"host"`
+	Port             int    `toml:"port"`
+	Username         string `toml:"username"`
+	Password         string `toml:"password"`
+	DBName           string `toml:"db_name"`
+	LogQueries       bool   `toml:"log_queries"`
+	DropTableAtStart bool   `toml:"drop_table_at_start"`
+	HistoryDrop      uint64 `toml:"history_drop"`
 }
 
 var defaultDB = DB{
 	Host: "localhost",
 	Port: 3306,
+}
+
+type TimeoutConfig struct {
+	BackoffMaxElapsedTimeSeconds int `toml:"backoff_max_elapsed_time_seconds"`
+	TimeoutMillis                int `toml:"timeout_millis"`
+}
+
+var defaultTimeout = TimeoutConfig{
+	BackoffMaxElapsedTimeSeconds: 300,
+	TimeoutMillis:                1000,
 }
 
 type Indexer struct {

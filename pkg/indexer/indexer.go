@@ -9,68 +9,80 @@ import (
 	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/database"
 	"gitlab.com/flarenetwork/libs/go-flare-common/pkg/logger"
 	"golang.org/x/sync/errgroup"
+	"gorm.io/gorm"
 )
 
 var log = logger.GetLogger()
 
-func New[B any, T any](
-	cfg *config.Indexer, db *database.DB, blockchain BlockchainClient[B, T],
+type BlockchainClient[B database.Block, T database.Transaction] interface {
+	GetLatestBlockInfo(context.Context) (uint64, uint64, error) // returns block number and timestamp
+	GetBlockResult(context.Context, uint64) (*BlockResult[B, T], error)
+	GetBlockTimestamp(context.Context, uint64) (uint64, error)
+}
+
+type BlockResult[B database.Block, T database.Transaction] struct {
+	Block        B
+	Transactions []T
+}
+
+func New[B database.Block, T database.Transaction](
+	cfg *config.BaseConfig, db *gorm.DB, blockchain BlockchainClient[B, T],
 ) Indexer[B, T] {
 	return Indexer[B, T]{
-		blockchain:       blockchain,
-		confirmations:    cfg.Confirmations,
-		db:               db,
-		maxBlockRange:    cfg.MaxBlockRange,
-		maxConcurrency:   cfg.MaxConcurrency,
-		startBlockNumber: cfg.StartBlockNumber,
+		blockchain:            blockchain,
+		confirmations:         cfg.Indexer.Confirmations,
+		db:                    db,
+		maxBlockRange:         cfg.Indexer.MaxBlockRange,
+		maxConcurrency:        cfg.Indexer.MaxConcurrency,
+		startBlockNumber:      cfg.Indexer.StartBlockNumber,
+		BackoffMaxElapsedTime: time.Duration(cfg.Timeout.BackoffMaxElapsedTimeSeconds) * time.Second,
+		Timeout:               time.Duration(cfg.Timeout.TimeoutMillis) * time.Millisecond,
 	}
 }
 
-type Indexer[B any, T any] struct {
+type Indexer[B database.Block, T database.Transaction] struct {
 	blockchain       BlockchainClient[B, T]
 	confirmations    uint64
-	db               *database.DB
+	db               *gorm.DB
 	maxBlockRange    uint64
 	maxConcurrency   int
 	startBlockNumber uint64
-}
 
-type BlockchainClient[B any, T any] interface {
-	GetLatestBlockNumber(context.Context) (uint64, error)
-	GetBlockResult(context.Context, uint64) (*BlockResult[B, T], error)
+	BackoffMaxElapsedTime time.Duration // currently not used
+	Timeout               time.Duration
 }
 
 func (ix *Indexer[B, T]) Run(ctx context.Context) error {
-	state, err := ix.db.GetState(ctx)
-	if err != nil {
-		return err
-	}
-
+	expBackOff := backoff.NewExponentialBackOff()
+	expBackOff.MaxElapsedTime = ix.BackoffMaxElapsedTime
 	upToDateBackoff := backoff.NewExponentialBackOff()
+	upToDateBackoff.MaxInterval = ix.BackoffMaxElapsedTime
 
 	for {
 		err := backoff.RetryNotify(
 			func() error {
-				newState, err := ix.runIteration(ctx, state)
+				results, newStates, err := ix.runIteration(ctx, database.GlobalStates)
 				if err != nil {
 					return err
 				}
 
-				if newState == nil {
+				if newStates == nil {
 					time.Sleep(upToDateBackoff.NextBackOff())
 					return nil
 				}
 
 				upToDateBackoff.Reset()
 
-				if err := ix.db.StoreState(ctx, newState); err != nil {
+				err = ix.saveData(ctx, results, newStates)
+				if err != nil {
 					return err
 				}
+				database.GlobalStates.UpdateStates(newStates)
+				log.Infof("successfully processed up to block %d", newStates[database.LastDatabaseIndexState].Index)
 
-				state = newState
 				return nil
 			},
-			backoff.NewExponentialBackOff(),
+			expBackOff,
 			func(err error, d time.Duration) {
 				log.Errorf("indexer error: %v. Will retry after %v", err, d)
 			},
@@ -81,57 +93,70 @@ func (ix *Indexer[B, T]) Run(ctx context.Context) error {
 	}
 }
 
-func (ix *Indexer[B, T]) runIteration(ctx context.Context, state *database.State) (*database.State, error) {
-	blkRange, err := ix.getBlockRange(ctx, state)
+func (ix *Indexer[B, T]) runIteration(
+	ctx context.Context, states *database.DBStates,
+) ([]BlockResult[B, T], map[string]*database.State, error) {
+	blkRange, err := ix.getBlockRange(ctx, states.States[database.LastDatabaseIndexState])
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	if blkRange.len() == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 
-	log.Debugf("indexing from block %d to %d", blkRange.start, blkRange.end)
+	log.Debugf("indexing from block %d to %d, latest block on chain %d", blkRange.start, blkRange.end-1, blkRange.latest)
 
-	if err := ix.indexBlockRange(ctx, blkRange); err != nil {
-		return nil, err
+	ctxResults, cancelFunc := context.WithTimeout(ctx, ix.Timeout)
+	results, err := ix.getBlockResults(ctxResults, blkRange)
+	cancelFunc()
+	if err != nil {
+		return nil, nil, err
 	}
 
-	return updateState(state, blkRange), nil
+	newStates := newStatesForBlockRange(blkRange, results, states)
+
+	return results, newStates, nil
 }
 
 type blockRange struct {
-	start uint64
-	end   uint64
+	start           uint64
+	end             uint64
+	latest          uint64
+	latestTimestamp uint64
 }
 
 func (br blockRange) len() uint64 {
 	return br.end - br.start
 }
 
-func (ix *Indexer[B, T]) getBlockRange(ctx context.Context, state *database.State) (*blockRange, error) {
-	latestBlockNumber, err := ix.blockchain.GetLatestBlockNumber(ctx)
+func (ix *Indexer[B, T]) getBlockRange(ctx context.Context, lastDBState *database.State) (*blockRange, error) {
+	ctxWithTimeout, cancelFunc := context.WithTimeout(ctx, ix.Timeout)
+	latestBlockNumber, latestBlockTimestamp, err := ix.blockchain.GetLatestBlockInfo(ctxWithTimeout)
+	cancelFunc()
 	if err != nil {
 		return nil, err
 	}
 
 	result := new(blockRange)
-	result.start = ix.getStartBlock(state)
+	result.start = ix.getStartBlock(lastDBState)
 	result.end = ix.getEndBlock(result.start, latestBlockNumber)
+	result.latest = latestBlockNumber
+	result.latestTimestamp = latestBlockTimestamp
 
 	return result, nil
 }
 
-func (ix *Indexer[B, T]) getStartBlock(state *database.State) uint64 {
-	if state == nil {
+func (ix *Indexer[B, T]) getStartBlock(lastDBState *database.State) uint64 {
+	if lastDBState == nil {
 		return ix.startBlockNumber
 	}
 
-	if state.LastIndexedBlockNumber < ix.startBlockNumber {
+	if lastDBState.Index < ix.startBlockNumber {
 		return ix.startBlockNumber
 	}
 
-	return state.LastIndexedBlockNumber + 1
+	return lastDBState.Index + 1
 }
 
 func (ix *Indexer[B, T]) getEndBlock(start uint64, latest uint64) uint64 {
@@ -148,20 +173,6 @@ func (ix *Indexer[B, T]) getEndBlock(start uint64, latest uint64) uint64 {
 	return latestConfirmedNum + 1
 }
 
-func (ix *Indexer[B, T]) indexBlockRange(ctx context.Context, blkRange *blockRange) error {
-	results, err := ix.getBlockResults(ctx, blkRange)
-	if err != nil {
-		return err
-	}
-
-	return ix.saveResults(ctx, results)
-}
-
-type BlockResult[B any, T any] struct {
-	Block        B
-	Transactions []T
-}
-
 func (ix *Indexer[B, T]) getBlockResults(
 	ctx context.Context, blkRange *blockRange,
 ) ([]BlockResult[B, T], error) {
@@ -174,17 +185,20 @@ func (ix *Indexer[B, T]) getBlockResults(
 	}
 
 	results := make([]BlockResult[B, T], l)
-	bOff := backoff.NewExponentialBackOff()
 
 	for i := blkRange.start; i < blkRange.end; i++ {
 		blockNum := i
 		eg.Go(func() error {
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			bOff := backoff.NewExponentialBackOff()
+			bOff.MaxElapsedTime = ix.BackoffMaxElapsedTime
+
 			return backoff.RetryNotify(
 				func() error {
-					sem <- struct{}{}
-					defer func() { <-sem }()
-
-					res, err := ix.blockchain.GetBlockResult(ctx, blockNum)
+					ctxWithTimeout, cancelFunc := context.WithTimeout(ctx, ix.Timeout)
+					res, err := ix.blockchain.GetBlockResult(ctxWithTimeout, blockNum)
+					cancelFunc()
 					if err != nil {
 						return err
 					}
@@ -194,7 +208,7 @@ func (ix *Indexer[B, T]) getBlockResults(
 				},
 				bOff,
 				func(err error, d time.Duration) {
-					log.Errorf("error indexing block %d: %v. Will retry after %v", blockNum, d)
+					log.Errorf("error indexing block %d: %v. Will retry after %v", blockNum, err, d)
 				},
 			)
 		})
@@ -207,7 +221,7 @@ func (ix *Indexer[B, T]) getBlockResults(
 	return results, nil
 }
 
-func (ix *Indexer[B, T]) saveResults(ctx context.Context, results []BlockResult[B, T]) error {
+func (ix *Indexer[B, T]) saveData(ctx context.Context, results []BlockResult[B, T], states map[string]*database.State) error {
 	blocks := make([]*B, len(results))
 	var transactions []*T
 
@@ -219,28 +233,40 @@ func (ix *Indexer[B, T]) saveResults(ctx context.Context, results []BlockResult[
 			transactions = append(transactions, &resTxs[j])
 		}
 	}
+	log.Debugf("fetched %d blocks with %d transactions from the chain", len(results), len(transactions))
 
-	if err := ix.db.SaveBatch(ctx, blocks); err != nil {
+	err := database.SaveData(ix.db, ctx, blocks, transactions, states)
+	if err != nil {
 		return err
 	}
-
-	if err := ix.db.SaveBatch(ctx, transactions); err != nil {
-		return err
-	}
+	log.Debug("data saved to the DB")
 
 	return nil
 }
 
-func updateState(state *database.State, blkRange *blockRange) *database.State {
-	var newState database.State
-	if state == nil {
-		newState = database.InitState()
+func newStatesForBlockRange[B database.Block, T database.Transaction](
+	blkRange *blockRange, results []BlockResult[B, T], states *database.DBStates,
+) map[string]*database.State {
+	newStates := make(map[string]*database.State)
+	if states.States[database.FirstDatabaseIndexState] == nil {
+		newStates[database.FirstDatabaseIndexState] = &database.State{
+			Name: database.FirstDatabaseIndexState, Index: blkRange.start, BlockTimestamp: results[0].Block.GetTimestamp(), Updated: time.Now(),
+		}
+	}
+	if states.States[database.LastDatabaseIndexState] == nil {
+		newStates[database.LastDatabaseIndexState] = &database.State{
+			Name: database.LastDatabaseIndexState, Index: blkRange.end - 1, BlockTimestamp: results[len(results)-1].Block.GetTimestamp(), Updated: time.Now(),
+		}
 	} else {
-		newState = *state
+		newStates[database.LastDatabaseIndexState] = states.States[database.LastDatabaseIndexState].NewState(blkRange.end-1, results[len(results)-1].Block.GetTimestamp())
+	}
+	if states.States[database.LastChainIndexState] == nil {
+		newStates[database.LastChainIndexState] = &database.State{
+			Name: database.LastChainIndexState, Index: blkRange.latest, BlockTimestamp: blkRange.latestTimestamp, Updated: time.Now(),
+		}
+	} else {
+		newStates[database.LastChainIndexState] = states.States[database.LastChainIndexState].NewState(blkRange.latest, blkRange.latestTimestamp)
 	}
 
-	newState.LastIndexedBlockNumber = blkRange.end - 1
-	newState.UpdatedAt = time.Now()
-
-	return &newState
+	return newStates
 }
