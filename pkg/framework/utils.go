@@ -89,42 +89,40 @@ func DropHistoryRunner[B database.Block, T database.Transaction](
 func initialHistoryDrop[B database.Block, T database.Transaction](
 	ctx context.Context, db *gorm.DB, bc indexer.BlockchainClient[B, T], cfg config.BaseConfig,
 ) (uint64, error) {
-	var newStartingBlockNumber uint64
-	if cfg.DB.HistoryDrop > 0 {
-		// Run an initial iteration of the history drop. This could take some
-		// time if it has not been run in a while after an outage - running
-		// separately avoids database clashes with the indexer.
-		log.Info("running initial DropHistory iteration")
+	newStartingBlockNumber := cfg.Indexer.StartBlockNumber
+	// Run an initial iteration of the history drop. This could take some
+	// time if it has not been run in a while after an outage - running
+	// separately avoids database clashes with the indexer.
+	log.Info("running initial DropHistory iteration")
 
-		var firstBlockNumber uint64
-		expBackOff := backoff.NewExponentialBackOff()
-		expBackOff.MaxInterval = time.Duration(cfg.Timeout.BackoffMaxElapsedTimeSeconds) * time.Second
-		err := backoff.RetryNotify(
-			func() (err error) {
-				_, lastBlockTimestamp, err := bc.GetLatestBlockInfo(ctx)
-				if err != nil {
-					return err
-				}
-				firstBlockNumber, err = database.DropHistoryIteration[B, T](ctx, db, cfg.DB.HistoryDrop, lastBlockTimestamp)
-
+	var firstBlockNumber uint64
+	expBackOff := backoff.NewExponentialBackOff()
+	expBackOff.MaxInterval = time.Duration(cfg.Timeout.BackoffMaxElapsedTimeSeconds) * time.Second
+	err := backoff.RetryNotify(
+		func() (err error) {
+			_, lastBlockTimestamp, err := bc.GetLatestBlockInfo(ctx)
+			if err != nil {
 				return err
-			},
-			expBackOff,
-			func(err error, d time.Duration) {
-				log.Error("DropHistory error: %s. Will retry after %s", err, d)
-			},
-		)
-		if err != nil {
-			return 0, errors.Wrap(err, "startup DropHistory error")
-		}
+			}
+			firstBlockNumber, err = database.DropHistoryIteration[B, T](ctx, db, cfg.DB.HistoryDrop, lastBlockTimestamp)
 
-		log.Info("initial DropHistory iteration finished")
+			return err
+		},
+		expBackOff,
+		func(err error, d time.Duration) {
+			log.Error("DropHistory error: %s. Will retry after %s", err, d)
+		},
+	)
+	if err != nil {
+		return 0, errors.Wrap(err, "startup DropHistory error")
+	}
 
-		// if nothing remains in the dataset, firstBlockNumber is 0
-		if firstBlockNumber > cfg.Indexer.StartBlockNumber {
-			log.Infof("new fist block in DB due to history drop: %d", firstBlockNumber)
-			newStartingBlockNumber = firstBlockNumber
-		}
+	log.Info("initial DropHistory iteration finished")
+
+	// if nothing remains in the dataset, firstBlockNumber is 0
+	if firstBlockNumber > cfg.Indexer.StartBlockNumber {
+		log.Infof("new fist block in DB due to history drop: %d", firstBlockNumber)
+		newStartingBlockNumber = firstBlockNumber
 	}
 
 	return newStartingBlockNumber, nil
