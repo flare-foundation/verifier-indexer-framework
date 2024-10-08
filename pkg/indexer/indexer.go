@@ -38,8 +38,7 @@ type BlockResult[B database.Block, T database.Transaction] struct {
 func New[B database.Block, T database.Transaction](
 	cfg *config.BaseConfig, db *database.DB[B, T], blockchain BlockchainClient[B, T],
 ) Indexer[B, T] {
-	return Indexer[B, T]{
-		blockchain:            blockchain,
+	ix := Indexer[B, T]{
 		confirmations:         cfg.Indexer.Confirmations,
 		db:                    db,
 		maxBlockRange:         cfg.Indexer.MaxBlockRange,
@@ -49,6 +48,10 @@ func New[B database.Block, T database.Transaction](
 		backoffMaxElapsedTime: time.Duration(cfg.Timeout.BackoffMaxElapsedTimeSeconds) * time.Second,
 		Timeout:               time.Duration(cfg.Timeout.TimeoutMillis) * time.Millisecond,
 	}
+
+	ix.blockchain = newBlockchainWithBackoff(blockchain, ix.newBackoff())
+
+	return ix
 }
 
 type Indexer[B database.Block, T database.Transaction] struct {
@@ -66,6 +69,7 @@ type Indexer[B database.Block, T database.Transaction] struct {
 
 func (ix *Indexer[B, T]) Run(ctx context.Context) error {
 	upToDateBackoff := ix.newBackoff()
+	errBackoff := ix.newBackoff()
 
 	state, err := ix.db.GetState(ctx)
 	if err != nil {
@@ -87,7 +91,7 @@ func (ix *Indexer[B, T]) Run(ctx context.Context) error {
 				state = newState
 				return nil
 			},
-			ix.newBackoff(),
+			errBackoff,
 			func(err error, d time.Duration) {
 				log.Errorf("indexer update chain state error: %v. Will retry after %v", err, d)
 			},
@@ -108,7 +112,7 @@ func (ix *Indexer[B, T]) Run(ctx context.Context) error {
 					ix.lastHistoryDropRun = time.Now()
 					return nil
 				},
-				ix.newBackoff(),
+				errBackoff,
 				func(err error, d time.Duration) {
 					log.Errorf("indexer history drop error: %v. Will retry after %v", err, d)
 				},
@@ -142,7 +146,7 @@ func (ix *Indexer[B, T]) Run(ctx context.Context) error {
 
 				return nil
 			},
-			ix.newBackoff(),
+			errBackoff,
 			func(err error, d time.Duration) {
 				log.Errorf("indexer iteration error: %v. Will retry after %v", err, d)
 			},
@@ -262,23 +266,15 @@ func (ix *Indexer[B, T]) getBlockResults(
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			return backoff.RetryNotify(
-				func() error {
-					ctxWithTimeout, cancelFunc := context.WithTimeout(ctx, ix.Timeout)
-					res, err := ix.blockchain.GetBlockResult(ctxWithTimeout, blockNum)
-					cancelFunc()
-					if err != nil {
-						return err
-					}
+			ctxWithTimeout, cancelFunc := context.WithTimeout(ctx, ix.Timeout)
+			res, err := ix.blockchain.GetBlockResult(ctxWithTimeout, blockNum)
+			cancelFunc()
+			if err != nil {
+				return err
+			}
 
-					results[blockNum-blkRange.start] = *res
-					return nil
-				},
-				ix.newBackoff(),
-				func(err error, d time.Duration) {
-					log.Errorf("error indexing block %d: %v. Will retry after %v", blockNum, err, d)
-				},
-			)
+			results[blockNum-blkRange.start] = *res
+			return nil
 		})
 	}
 
