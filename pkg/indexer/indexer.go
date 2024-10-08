@@ -38,20 +38,20 @@ type BlockResult[B database.Block, T database.Transaction] struct {
 func New[B database.Block, T database.Transaction](
 	cfg *config.BaseConfig, db *database.DB[B, T], blockchain BlockchainClient[B, T],
 ) Indexer[B, T] {
-	ix := Indexer[B, T]{
+	backoffMaxElapsedTime := time.Duration(cfg.Timeout.BackoffMaxElapsedTimeSeconds) * time.Second
+
+	return Indexer[B, T]{
+		blockchain: newBlockchainWithBackoff(
+			blockchain, backoffMaxElapsedTime, time.Duration(cfg.Timeout.TimeoutMillis)*time.Millisecond,
+		),
 		confirmations:         cfg.Indexer.Confirmations,
 		db:                    db,
 		maxBlockRange:         cfg.Indexer.MaxBlockRange,
 		maxConcurrency:        cfg.Indexer.MaxConcurrency,
 		startBlockNumber:      cfg.Indexer.StartBlockNumber,
 		historyDropInterval:   cfg.DB.HistoryDrop,
-		backoffMaxElapsedTime: time.Duration(cfg.Timeout.BackoffMaxElapsedTimeSeconds) * time.Second,
-		Timeout:               time.Duration(cfg.Timeout.TimeoutMillis) * time.Millisecond,
+		backoffMaxElapsedTime: backoffMaxElapsedTime,
 	}
-
-	ix.blockchain = newBlockchainWithBackoff(blockchain, ix.newBackoff())
-
-	return ix
 }
 
 type Indexer[B database.Block, T database.Transaction] struct {
@@ -64,7 +64,6 @@ type Indexer[B database.Block, T database.Transaction] struct {
 	historyDropInterval   uint64
 	lastHistoryDropRun    time.Time
 	backoffMaxElapsedTime time.Duration
-	Timeout               time.Duration
 }
 
 func (ix *Indexer[B, T]) Run(ctx context.Context) error {
@@ -189,9 +188,7 @@ func (ix *Indexer[B, T]) runIteration(
 		blkRange.start, blkRange.end-1, state.LastChainBlockNumber,
 	)
 
-	ctxResults, cancelFunc := context.WithTimeout(ctx, ix.Timeout)
-	blockResults, err := ix.getBlockResults(ctxResults, blkRange)
-	cancelFunc()
+	blockResults, err := ix.getBlockResults(ctx, blkRange)
 	if err != nil {
 		return nil, err
 	}
@@ -266,9 +263,7 @@ func (ix *Indexer[B, T]) getBlockResults(
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			ctxWithTimeout, cancelFunc := context.WithTimeout(ctx, ix.Timeout)
-			res, err := ix.blockchain.GetBlockResult(ctxWithTimeout, blockNum)
-			cancelFunc()
+			res, err := ix.blockchain.GetBlockResult(ctx, blockNum)
 			if err != nil {
 				return err
 			}
