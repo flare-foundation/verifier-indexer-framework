@@ -2,9 +2,9 @@ package indexer
 
 import (
 	"context"
+	"sort"
 	"time"
 
-	"github.com/cenkalti/backoff/v4"
 	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/database"
 )
 
@@ -22,6 +22,7 @@ func (ix *Indexer[B, T]) runHistoryDrop(
 	ctx context.Context, state *database.State,
 ) (*database.State, error) {
 	log.Debugf("running history drop")
+
 	return ix.db.DropHistoryIteration(
 		ctx, state, ix.historyDropInterval, state.LastChainBlockTimestamp,
 	)
@@ -44,37 +45,25 @@ func (ix *Indexer[B, T]) getMinBlockWithinHistoryInterval(
 		return ix.startBlockNumber, nil
 	}
 
-	var newBlockTime uint64
-	firstBlockNumber := ix.startBlockNumber
-	lastBlockNumber := latestBlock.BlockNumber
-
-	// Binary search for the first block within the history drop interval.
-	for lastBlockNumber-firstBlockNumber > 1 {
-		newBlockNumber := (firstBlockNumber + lastBlockNumber) / 2
-
-		err = backoff.RetryNotify(
-			func() error {
-				newBlockTime, err = ix.blockchain.GetBlockTimestamp(ctx, newBlockNumber)
-				if err != nil {
-					return err
-				}
-				return nil
-			},
-			backoff.NewExponentialBackOff(),
-			func(err error, d time.Duration) {
-				log.Errorf("error getting block timestamp: %w. Will retry after %v", err, d)
-			},
-		)
-		if err != nil {
-			return 0, err
-		}
-
-		if latestBlock.Timestamp-newBlockTime <= ix.historyDropInterval {
-			lastBlockNumber = newBlockNumber
-		} else {
-			firstBlockNumber = newBlockNumber
-		}
+	if latestBlock.BlockNumber < ix.startBlockNumber {
+		return ix.startBlockNumber, nil
 	}
 
-	return lastBlockNumber, nil
+	// find the first block within the history drop interval using binary search
+	i := sort.Search(int(latestBlock.BlockNumber-ix.startBlockNumber), func(i int) bool {
+		blockNumber := ix.startBlockNumber + uint64(i)
+
+		var blockTime uint64
+		blockTime, err = ix.blockchain.GetBlockTimestamp(ctx, blockNumber)
+		if err != nil {
+			return false
+		}
+
+		return latestBlock.Timestamp-blockTime <= ix.historyDropInterval
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	return ix.startBlockNumber + uint64(i), nil
 }
