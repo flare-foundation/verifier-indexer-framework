@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 
+	"github.com/pkg/errors"
 	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/config"
 	"gitlab.com/flarenetwork/libs/go-flare-common/pkg/logger"
 
@@ -22,12 +23,16 @@ const (
 
 var log = logger.GetLogger()
 
-type ExternalEntities struct {
-	Block       interface{}
-	Transaction interface{}
+type ExternalEntities[B Block, T Transaction] struct {
+	Block       *B
+	Transaction *T
 }
 
-func New(cfg *config.DB, entities ExternalEntities) (*gorm.DB, error) {
+type DB[B Block, T Transaction] struct {
+	g *gorm.DB
+}
+
+func New[B Block, T Transaction](cfg *config.DB, entities ExternalEntities[B, T]) (*DB[B, T], error) {
 	db, err := connect(cfg)
 	if err != nil {
 		return nil, err
@@ -50,7 +55,7 @@ func New(cfg *config.DB, entities ExternalEntities) (*gorm.DB, error) {
 
 	log.Debug("migrated DB entities")
 
-	return db, err
+	return &DB[B, T]{g: db}, err
 }
 
 func connect(cfg *config.DB) (*gorm.DB, error) {
@@ -84,10 +89,32 @@ func formatDSN(cfg *config.DB) string {
 	return u.String()
 }
 
-func SaveData[B, T any](db *gorm.DB, ctx context.Context, blocks []*B, transactions []*T, states map[string]*State) error {
-	return db.Transaction(func(tx *gorm.DB) error {
+func (db *DB[B, T]) GetState(ctx context.Context) (*State, error) {
+	state := new(State)
+
+	if err := db.g.WithContext(ctx).First(state, globalStateID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return initState(), nil
+		}
+
+		return nil, err
+	}
+
+	return state, nil
+}
+
+func initState() *State {
+	return &State{
+		ID: globalStateID,
+	}
+}
+
+func (db *DB[B, T]) SaveAllEntities(
+	ctx context.Context, blocks []*B, transactions []*T, state *State,
+) error {
+	return db.g.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if len(blocks) != 0 {
-			err := tx.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).
+			err := tx.Clauses(clause.OnConflict{DoNothing: true}).
 				Create(blocks).
 				Error
 			if err != nil {
@@ -96,7 +123,7 @@ func SaveData[B, T any](db *gorm.DB, ctx context.Context, blocks []*B, transacti
 		}
 
 		if len(transactions) != 0 {
-			err := tx.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).
+			err := tx.Clauses(clause.OnConflict{DoNothing: true}).
 				Create(transactions).
 				Error
 			if err != nil {
@@ -104,14 +131,13 @@ func SaveData[B, T any](db *gorm.DB, ctx context.Context, blocks []*B, transacti
 			}
 		}
 
-		if len(states) != 0 {
-			for _, state := range states {
-				err := tx.WithContext(ctx).Save(state).Error
-				if err != nil {
-					return err
-				}
+		if state != nil {
+			err := tx.Save(state).Error
+			if err != nil {
+				return err
 			}
 		}
+
 		return nil
 	})
 }
