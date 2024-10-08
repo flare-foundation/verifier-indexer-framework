@@ -35,17 +35,20 @@ func (ix *Indexer[B, T]) getMinBlockWithinHistoryInterval(
 		return 0, err
 	}
 
-	lastBlockNumber, lastBlockTime, err := ix.blockchain.GetLatestBlockInfo(ctx)
+	latestBlock, err := ix.blockchain.GetLatestBlockInfo(ctx)
 	if err != nil {
 		return 0, err
 	}
 
-	if lastBlockTime-firstBlockTime < ix.historyDropInterval {
+	if latestBlock.Timestamp-firstBlockTime < ix.historyDropInterval {
 		return ix.startBlockNumber, nil
 	}
 
 	var newBlockTime uint64
 	firstBlockNumber := ix.startBlockNumber
+	lastBlockNumber := latestBlock.BlockNumber
+
+	// Binary search for the first block within the history drop interval.
 	for lastBlockNumber-firstBlockNumber > 1 {
 		newBlockNumber := (firstBlockNumber + lastBlockNumber) / 2
 
@@ -66,7 +69,7 @@ func (ix *Indexer[B, T]) getMinBlockWithinHistoryInterval(
 			return 0, err
 		}
 
-		if lastBlockTime-newBlockTime <= ix.historyDropInterval {
+		if latestBlock.Timestamp-newBlockTime <= ix.historyDropInterval {
 			lastBlockNumber = newBlockNumber
 		} else {
 			firstBlockNumber = newBlockNumber
