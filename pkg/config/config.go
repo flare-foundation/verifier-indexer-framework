@@ -42,7 +42,7 @@ type TimeoutConfig struct {
 
 var defaultTimeout = TimeoutConfig{
 	BackoffMaxElapsedTimeSeconds: 300,
-	RequestTimeoutMillis:         1000,
+	RequestTimeoutMillis:         3000,
 }
 
 type Indexer struct {
