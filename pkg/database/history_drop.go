@@ -11,9 +11,11 @@ import (
 // timeouts.
 const deleteBatchSize = 1000
 
-func DropHistoryIteration[B Block, T Transaction](
-	ctx context.Context, db *gorm.DB, intervalSeconds, lastBlockTime uint64,
-) (uint64, error) {
+func (db *DB[B, T]) DropHistoryIteration(
+	ctx context.Context,
+	state *State,
+	intervalSeconds, lastBlockTime uint64,
+) (*State, error) {
 	deleteStart := lastBlockTime - intervalSeconds
 
 	// Delete in specified order to not break foreign keys.
@@ -21,9 +23,9 @@ func DropHistoryIteration[B Block, T Transaction](
 		new(B),
 		new(T),
 	}
-	var firstBlockNumber uint64
+	newState := *state
 
-	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := db.g.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		for _, entity := range deleteOrder {
 			if err := deleteInBatches(tx, deleteStart, entity); err != nil {
 				return err
@@ -35,33 +37,29 @@ func DropHistoryIteration[B Block, T Transaction](
 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return errors.Wrap(err, "Failed to get first block in the DB")
 		}
+
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			err = GlobalStates.Delete(tx, FirstDatabaseIndexState)
-			if err != nil {
-				return errors.Wrap(err, "Failed to update state in the DB")
-			}
-			err = GlobalStates.Delete(tx, LastDatabaseIndexState)
-			if err != nil {
-				return errors.Wrap(err, "Failed to update state in the DB")
-			}
+			newState.FirstIndexedBlockNumber = 0
+			newState.FirstIndexedBlockTimestamp = 0
+			newState.LastIndexedBlockNumber = 0
+			newState.LastIndexedBlockTimestamp = 0
 
 			return nil
 		}
 
-		firstBlockNumber = firstBlock.GetBlockNumber()
-		firstBlockTimestamp := firstBlock.GetTimestamp()
+		newState.FirstIndexedBlockNumber = firstBlock.GetBlockNumber()
+		newState.FirstIndexedBlockTimestamp = firstBlock.GetTimestamp()
 
-		err = GlobalStates.Update(tx, FirstDatabaseIndexState, firstBlockNumber, firstBlockTimestamp)
-		if err != nil {
+		if err := tx.Save(newState).Error; err != nil {
 			return errors.Wrap(err, "Failed to update state in the DB")
 		}
-
-		log.Infof("deleted blocks up to index %d", firstBlockNumber)
 
 		return nil
 	})
 
-	return firstBlockNumber, err
+	log.Infof("deleted blocks up to index %d", newState.FirstIndexedBlockNumber)
+
+	return &newState, err
 }
 
 func deleteInBatches(db *gorm.DB, deleteStart uint64, entity interface{}) error {
