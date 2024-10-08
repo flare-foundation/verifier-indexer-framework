@@ -38,38 +38,38 @@ type BlockResult[B database.Block, T database.Transaction] struct {
 func New[B database.Block, T database.Transaction](
 	cfg *config.BaseConfig, db *database.DB[B, T], blockchain BlockchainClient[B, T],
 ) Indexer[B, T] {
-	return Indexer[B, T]{
-		blockchain:            blockchain,
+	ix := Indexer[B, T]{
 		confirmations:         cfg.Indexer.Confirmations,
 		db:                    db,
 		maxBlockRange:         cfg.Indexer.MaxBlockRange,
 		maxConcurrency:        cfg.Indexer.MaxConcurrency,
 		startBlockNumber:      cfg.Indexer.StartBlockNumber,
 		historyDropInterval:   cfg.DB.HistoryDrop,
-		BackoffMaxElapsedTime: time.Duration(cfg.Timeout.BackoffMaxElapsedTimeSeconds) * time.Second,
+		backoffMaxElapsedTime: time.Duration(cfg.Timeout.BackoffMaxElapsedTimeSeconds) * time.Second,
 		Timeout:               time.Duration(cfg.Timeout.TimeoutMillis) * time.Millisecond,
 	}
+
+	ix.blockchain = newBlockchainWithBackoff(blockchain, ix.newBackoff())
+
+	return ix
 }
 
 type Indexer[B database.Block, T database.Transaction] struct {
-	blockchain          BlockchainClient[B, T]
-	confirmations       uint64
-	db                  *database.DB[B, T]
-	maxBlockRange       uint64
-	maxConcurrency      int
-	startBlockNumber    uint64
-	historyDropInterval uint64
-	lastHistoryDropRun  time.Time
-
-	BackoffMaxElapsedTime time.Duration // currently not used
+	blockchain            BlockchainClient[B, T]
+	confirmations         uint64
+	db                    *database.DB[B, T]
+	maxBlockRange         uint64
+	maxConcurrency        int
+	startBlockNumber      uint64
+	historyDropInterval   uint64
+	lastHistoryDropRun    time.Time
+	backoffMaxElapsedTime time.Duration
 	Timeout               time.Duration
 }
 
 func (ix *Indexer[B, T]) Run(ctx context.Context) error {
-	expBackOff := backoff.NewExponentialBackOff()
-	expBackOff.MaxElapsedTime = ix.BackoffMaxElapsedTime
-	upToDateBackoff := backoff.NewExponentialBackOff()
-	upToDateBackoff.MaxInterval = ix.BackoffMaxElapsedTime
+	upToDateBackoff := ix.newBackoff()
+	errBackoff := ix.newBackoff()
 
 	state, err := ix.db.GetState(ctx)
 	if err != nil {
@@ -91,7 +91,7 @@ func (ix *Indexer[B, T]) Run(ctx context.Context) error {
 				state = newState
 				return nil
 			},
-			expBackOff,
+			errBackoff,
 			func(err error, d time.Duration) {
 				log.Errorf("indexer update chain state error: %v. Will retry after %v", err, d)
 			},
@@ -112,7 +112,7 @@ func (ix *Indexer[B, T]) Run(ctx context.Context) error {
 					ix.lastHistoryDropRun = time.Now()
 					return nil
 				},
-				expBackOff,
+				errBackoff,
 				func(err error, d time.Duration) {
 					log.Errorf("indexer history drop error: %v. Will retry after %v", err, d)
 				},
@@ -146,7 +146,7 @@ func (ix *Indexer[B, T]) Run(ctx context.Context) error {
 
 				return nil
 			},
-			expBackOff,
+			errBackoff,
 			func(err error, d time.Duration) {
 				log.Errorf("indexer iteration error: %v. Will retry after %v", err, d)
 			},
@@ -265,26 +265,16 @@ func (ix *Indexer[B, T]) getBlockResults(
 		eg.Go(func() error {
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			bOff := backoff.NewExponentialBackOff()
-			bOff.MaxElapsedTime = ix.BackoffMaxElapsedTime
 
-			return backoff.RetryNotify(
-				func() error {
-					ctxWithTimeout, cancelFunc := context.WithTimeout(ctx, ix.Timeout)
-					res, err := ix.blockchain.GetBlockResult(ctxWithTimeout, blockNum)
-					cancelFunc()
-					if err != nil {
-						return err
-					}
+			ctxWithTimeout, cancelFunc := context.WithTimeout(ctx, ix.Timeout)
+			res, err := ix.blockchain.GetBlockResult(ctxWithTimeout, blockNum)
+			cancelFunc()
+			if err != nil {
+				return err
+			}
 
-					results[blockNum-blkRange.start] = *res
-					return nil
-				},
-				bOff,
-				func(err error, d time.Duration) {
-					log.Errorf("error indexing block %d: %v. Will retry after %v", blockNum, err, d)
-				},
-			)
+			results[blockNum-blkRange.start] = *res
+			return nil
 		})
 	}
 
@@ -331,6 +321,10 @@ func (ix *Indexer[B, T]) updateChainState(ctx context.Context, state *database.S
 	newState.LastChainBlockTimestamp = blockInfo.Timestamp
 
 	return &newState, nil
+}
+
+func (ix *Indexer[B, T]) newBackoff() backoff.BackOff {
+	return backoff.NewExponentialBackOff(backoff.WithMaxElapsedTime(ix.backoffMaxElapsedTime))
 }
 
 func updateState[B database.Block, T database.Transaction](
