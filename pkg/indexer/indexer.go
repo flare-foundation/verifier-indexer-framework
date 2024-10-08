@@ -40,6 +40,7 @@ func New[B database.Block, T database.Transaction](
 		maxBlockRange:         cfg.Indexer.MaxBlockRange,
 		maxConcurrency:        cfg.Indexer.MaxConcurrency,
 		startBlockNumber:      cfg.Indexer.StartBlockNumber,
+		historyDropInterval:   cfg.DB.HistoryDrop,
 		BackoffMaxElapsedTime: time.Duration(cfg.Timeout.BackoffMaxElapsedTimeSeconds) * time.Second,
 		Timeout:               time.Duration(cfg.Timeout.TimeoutMillis) * time.Millisecond,
 	}

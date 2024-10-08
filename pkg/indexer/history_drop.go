@@ -24,6 +24,7 @@ func (ix *Indexer[B, T]) shouldRunHistoryDrop(state *database.State) bool {
 func (ix *Indexer[B, T]) runHistoryDrop(
 	ctx context.Context, state *database.State,
 ) (*database.State, error) {
+	log.Debugf("running history drop")
 	return ix.db.DropHistoryIteration(
 		ctx, state, ix.historyDropInterval, state.LastChainBlockTimestamp,
 	)
