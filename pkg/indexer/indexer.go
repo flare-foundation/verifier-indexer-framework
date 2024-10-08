@@ -15,9 +15,14 @@ import (
 var log = logger.GetLogger()
 
 type BlockchainClient[B database.Block, T database.Transaction] interface {
-	GetLatestBlockInfo(context.Context) (uint64, uint64, error) // returns block number and timestamp
+	GetLatestBlockInfo(context.Context) (*BlockInfo, error)
 	GetBlockResult(context.Context, uint64) (*BlockResult[B, T], error)
 	GetBlockTimestamp(context.Context, uint64) (uint64, error)
+}
+
+type BlockInfo struct {
+	BlockNumber uint64
+	Timestamp   uint64
 }
 
 type iterationResult[B database.Block, T database.Transaction] struct {
@@ -316,14 +321,14 @@ func (ix *Indexer[B, T]) saveData(ctx context.Context, results *iterationResult[
 }
 
 func (ix *Indexer[B, T]) updateChainState(ctx context.Context, state *database.State) (*database.State, error) {
-	latestBlockNumber, latestBlockTimestamp, err := ix.blockchain.GetLatestBlockInfo(ctx)
+	blockInfo, err := ix.blockchain.GetLatestBlockInfo(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	newState := *state
-	newState.LastChainBlockNumber = latestBlockNumber
-	newState.LastChainBlockTimestamp = latestBlockTimestamp
+	newState.LastChainBlockNumber = blockInfo.BlockNumber
+	newState.LastChainBlockTimestamp = blockInfo.Timestamp
 
 	return &newState, nil
 }

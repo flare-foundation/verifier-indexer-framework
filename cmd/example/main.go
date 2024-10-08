@@ -27,8 +27,8 @@ func NewExample(cfg *ExampleConfig) (indexer.BlockchainClient[dbBlock, dbTransac
 	return ExampleBlockchain{}, nil
 }
 
-func (e ExampleBlockchain) GetLatestBlockInfo(context.Context) (uint64, uint64, error) {
-	return 0, 0, errors.New("not implemented")
+func (e ExampleBlockchain) GetLatestBlockInfo(context.Context) (*indexer.BlockInfo, error) {
+	return nil, errors.New("not implemented")
 }
 
 func (e ExampleBlockchain) GetBlockResult(context.Context, uint64) (*indexer.BlockResult[dbBlock, dbTransaction], error) {
