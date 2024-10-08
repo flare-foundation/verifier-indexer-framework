@@ -10,28 +10,32 @@ import (
 )
 
 type blockchainWithBackoff[B database.Block, T database.Transaction] struct {
-	client  BlockchainClient[B, T]
-	backoff backoff.BackOff
+	client         BlockchainClient[B, T]
+	maxElapsedTime time.Duration
+	requestTimeout time.Duration
 }
 
 func newBlockchainWithBackoff[B database.Block, T database.Transaction](
-	client BlockchainClient[B, T], backoff backoff.BackOff,
+	client BlockchainClient[B, T], maxElapsedTime, requestTimeout time.Duration,
 ) *blockchainWithBackoff[B, T] {
 	return &blockchainWithBackoff[B, T]{
-		client:  client,
-		backoff: backoff,
+		client:         client,
+		maxElapsedTime: maxElapsedTime,
+		requestTimeout: requestTimeout,
 	}
 }
 
 func (bwb *blockchainWithBackoff[B, T]) GetLatestBlockInfo(ctx context.Context) (*BlockInfo, error) {
 	var blockInfo *BlockInfo
-
 	err := backoff.RetryNotify(
 		func() (err error) {
+			ctx, cancel := context.WithTimeout(ctx, bwb.requestTimeout)
+			defer cancel()
+
 			blockInfo, err = bwb.client.GetLatestBlockInfo(ctx)
 			return err
 		},
-		bwb.backoff,
+		bwb.newBackoff(ctx),
 		func(err error, d time.Duration) {
 			log.Errorf("GetLatestBlockInfo error: %v. Will retry after %v", err, d)
 		},
@@ -48,10 +52,13 @@ func (bwb *blockchainWithBackoff[B, T]) GetBlockResult(ctx context.Context, bloc
 
 	err := backoff.RetryNotify(
 		func() (err error) {
+			ctx, cancel := context.WithTimeout(ctx, bwb.requestTimeout)
+			defer cancel()
+
 			blockResult, err = bwb.client.GetBlockResult(ctx, blockNumber)
 			return err
 		},
-		bwb.backoff,
+		bwb.newBackoff(ctx),
 		func(err error, d time.Duration) {
 			log.Errorf("GetBlockResult error: %v. Will retry after %v", err, d)
 		},
@@ -68,10 +75,13 @@ func (bwb *blockchainWithBackoff[B, T]) GetBlockTimestamp(ctx context.Context, b
 
 	err := backoff.RetryNotify(
 		func() (err error) {
+			ctx, cancel := context.WithTimeout(ctx, bwb.requestTimeout)
+			defer cancel()
+
 			timestamp, err = bwb.client.GetBlockTimestamp(ctx, blockNumber)
 			return err
 		},
-		bwb.backoff,
+		bwb.newBackoff(ctx),
 		func(err error, d time.Duration) {
 			log.Errorf("GetBlockTimestamp error: %v. Will retry after %v", err, d)
 		},
@@ -81,4 +91,10 @@ func (bwb *blockchainWithBackoff[B, T]) GetBlockTimestamp(ctx context.Context, b
 	}
 
 	return timestamp, nil
+}
+
+func (bwb *blockchainWithBackoff[B, T]) newBackoff(ctx context.Context) backoff.BackOff {
+	return backoff.WithContext(backoff.NewExponentialBackOff(
+		backoff.WithMaxElapsedTime(bwb.maxElapsedTime),
+	), ctx)
 }
