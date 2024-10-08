@@ -7,10 +7,7 @@ import (
 	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/config"
 	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/database"
 	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/indexer"
-	"gitlab.com/flarenetwork/libs/go-flare-common/pkg/logger"
 )
-
-var log = logger.GetLogger()
 
 type CLIArgs struct {
 	ConfigFile string `arg:"--config,env:CONFIG_FILE" default:"config.toml"`

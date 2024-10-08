@@ -14,11 +14,8 @@ func (ix *Indexer[B, T]) shouldRunHistoryDrop(state *database.State) bool {
 	}
 
 	lastChainBlockTimestamp := time.Unix(int64(state.LastChainBlockTimestamp), 0)
-	if lastChainBlockTimestamp.Sub(ix.lastHistoryDropRun) < time.Duration(ix.historyDropInterval)*time.Second {
-		return false
-	}
 
-	return true
+	return lastChainBlockTimestamp.Sub(ix.lastHistoryDropRun) >= time.Duration(ix.historyDropInterval)*time.Second
 }
 
 func (ix *Indexer[B, T]) runHistoryDrop(
