@@ -67,8 +67,7 @@ type Indexer[B database.Block, T database.Transaction] struct {
 }
 
 func (ix *Indexer[B, T]) Run(ctx context.Context) error {
-	upToDateBackoff := ix.newBackoff()
-	errBackoff := ix.newBackoff()
+	upToDateBackoff := backoff.NewExponentialBackOff()
 
 	state, err := ix.db.GetState(ctx)
 	if err != nil {
@@ -90,7 +89,7 @@ func (ix *Indexer[B, T]) Run(ctx context.Context) error {
 				state = newState
 				return nil
 			},
-			errBackoff,
+			ix.newBackoff(),
 			func(err error, d time.Duration) {
 				log.Errorf("indexer update chain state error: %v. Will retry after %v", err, d)
 			},
@@ -111,7 +110,7 @@ func (ix *Indexer[B, T]) Run(ctx context.Context) error {
 					ix.lastHistoryDropRun = time.Now()
 					return nil
 				},
-				errBackoff,
+				ix.newBackoff(),
 				func(err error, d time.Duration) {
 					log.Errorf("indexer history drop error: %v. Will retry after %v", err, d)
 				},
@@ -145,7 +144,7 @@ func (ix *Indexer[B, T]) Run(ctx context.Context) error {
 
 				return nil
 			},
-			errBackoff,
+			ix.newBackoff(),
 			func(err error, d time.Duration) {
 				log.Errorf("indexer iteration error: %v. Will retry after %v", err, d)
 			},
