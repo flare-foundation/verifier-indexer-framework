@@ -42,7 +42,7 @@ func New[B database.Block, T database.Transaction](
 
 	return Indexer[B, T]{
 		blockchain: newBlockchainWithBackoff(
-			blockchain, backoffMaxElapsedTime, time.Duration(cfg.Timeout.TimeoutMillis)*time.Millisecond,
+			blockchain, backoffMaxElapsedTime, time.Duration(cfg.Timeout.RequestTimeoutMillis)*time.Millisecond,
 		),
 		confirmations:         cfg.Indexer.Confirmations,
 		db:                    db,

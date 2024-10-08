@@ -37,12 +37,12 @@ var defaultDB = DB{
 
 type TimeoutConfig struct {
 	BackoffMaxElapsedTimeSeconds int `toml:"backoff_max_elapsed_time_seconds"`
-	TimeoutMillis                int `toml:"timeout_millis"`
+	RequestTimeoutMillis         int `toml:"request_timeout_millis"`
 }
 
 var defaultTimeout = TimeoutConfig{
 	BackoffMaxElapsedTimeSeconds: 300,
-	TimeoutMillis:                1000,
+	RequestTimeoutMillis:         1000,
 }
 
 type Indexer struct {
