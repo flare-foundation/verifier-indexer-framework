@@ -9,15 +9,13 @@ import (
 	"gitlab.com/flarenetwork/libs/go-flare-common/pkg/logger"
 )
 
-var log = logger.GetLogger()
-
 func main() {
 	input := framework.Input[dbBlock, ExampleConfig, dbTransaction]{
 		NewBlockchainClient: NewExample,
 	}
 
 	if err := framework.Run(input); err != nil {
-		log.Fatal(err)
+		logger.Fatal(err)
 	}
 }
 

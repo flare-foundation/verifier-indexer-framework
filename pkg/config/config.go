@@ -1,6 +1,9 @@
 package config
 
-import "github.com/BurntSushi/toml"
+import (
+	"github.com/BurntSushi/toml"
+	"gitlab.com/flarenetwork/libs/go-flare-common/pkg/logger"
+)
 
 func ReadFile(filepath string, cfg interface{}) error {
 	_, err := toml.DecodeFile(filepath, cfg)
@@ -11,12 +14,14 @@ type BaseConfig struct {
 	DB      DB            `toml:"db"`
 	Indexer Indexer       `toml:"indexer"`
 	Timeout TimeoutConfig `toml:"timeout"`
+	Logger  logger.Config `toml:"logger"`
 }
 
 var DefaultBaseConfig = BaseConfig{
 	DB:      defaultDB,
 	Indexer: defaultIndexer,
 	Timeout: defaultTimeout,
+	Logger: logger.DefaultConfig(),
 }
 
 type DB struct {

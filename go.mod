@@ -7,11 +7,13 @@ require (
 	github.com/alexflint/go-arg v1.5.1
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/pkg/errors v0.9.1
-	gitlab.com/flarenetwork/libs/go-flare-common v0.0.0-20240904083824-3a81e691aebf
+	gitlab.com/flarenetwork/libs/go-flare-common v0.0.0-00010101000000-000000000000
 	golang.org/x/sync v0.8.0
 	gorm.io/driver/postgres v1.5.9
 	gorm.io/gorm v1.25.11
 )
+
+replace gitlab.com/flarenetwork/libs/go-flare-common => ../../go-flare-common
 
 require (
 	github.com/alexflint/go-scalar v1.2.0 // indirect
@@ -25,4 +27,5 @@ require (
 	go.uber.org/zap v1.27.0 // indirect
 	golang.org/x/crypto v0.26.0 // indirect
 	golang.org/x/text v0.17.0 // indirect
+	gopkg.in/natefinch/lumberjack.v2 v2.0.0 // indirect
 )
