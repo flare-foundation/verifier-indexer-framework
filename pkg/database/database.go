@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"net/url"
 
+	"github.com/flare-foundation/go-flare-common/pkg/logger"
 	"github.com/pkg/errors"
 	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/config"
-	"github.com/flare-foundation/go-flare-common/pkg/logger"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"

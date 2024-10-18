@@ -21,7 +21,7 @@ var DefaultBaseConfig = BaseConfig{
 	DB:      defaultDB,
 	Indexer: defaultIndexer,
 	Timeout: defaultTimeout,
-	Logger: logger.DefaultConfig(),
+	Logger:  logger.DefaultConfig(),
 }
 
 type DB struct {
