@@ -5,6 +5,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/flare-foundation/go-flare-common/pkg/logger"
 	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/database"
 )
 
@@ -21,7 +22,7 @@ func (ix *Indexer[B, T]) shouldRunHistoryDrop(state *database.State) bool {
 func (ix *Indexer[B, T]) runHistoryDrop(
 	ctx context.Context, state *database.State,
 ) (*database.State, error) {
-	log.Debugf("running history drop")
+	logger.Debugf("running history drop")
 
 	return ix.db.DropHistoryIteration(
 		ctx, state, ix.historyDropInterval, state.LastChainBlockTimestamp,

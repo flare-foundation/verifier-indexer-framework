@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/alexflint/go-arg"
+	"github.com/flare-foundation/go-flare-common/pkg/logger"
 	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/config"
 	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/database"
 	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/indexer"
@@ -34,6 +35,8 @@ func Run[B database.Block, C any, T database.Transaction](input Input[B, C, T]) 
 	if err := config.ReadFile(args.ConfigFile, &cfg); err != nil {
 		return err
 	}
+
+	logger.Set(cfg.Logger)
 
 	db, err := database.New(&cfg.DB, database.ExternalEntities[B, T]{
 		Block:       new(B),

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	"github.com/flare-foundation/go-flare-common/pkg/logger"
 	"github.com/pkg/errors"
 	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/database"
 )
@@ -37,7 +38,7 @@ func (bwb *blockchainWithBackoff[B, T]) GetLatestBlockInfo(ctx context.Context) 
 		},
 		bwb.newBackoff(ctx),
 		func(err error, d time.Duration) {
-			log.Errorf("GetLatestBlockInfo error: %v. Will retry after %v", err, d)
+			logger.Errorf("GetLatestBlockInfo error: %v. Will retry after %v", err, d)
 		},
 	)
 	if err != nil {
@@ -60,7 +61,7 @@ func (bwb *blockchainWithBackoff[B, T]) GetBlockResult(ctx context.Context, bloc
 		},
 		bwb.newBackoff(ctx),
 		func(err error, d time.Duration) {
-			log.Errorf("GetBlockResult error: %v. Will retry after %v", err, d)
+			logger.Errorf("GetBlockResult error: %v. Will retry after %v", err, d)
 		},
 	)
 	if err != nil {
@@ -83,7 +84,7 @@ func (bwb *blockchainWithBackoff[B, T]) GetBlockTimestamp(ctx context.Context, b
 		},
 		bwb.newBackoff(ctx),
 		func(err error, d time.Duration) {
-			log.Errorf("GetBlockTimestamp error: %v. Will retry after %v", err, d)
+			logger.Errorf("GetBlockTimestamp error: %v. Will retry after %v", err, d)
 		},
 	)
 	if err != nil {

@@ -4,12 +4,10 @@ import (
 	"context"
 	"errors"
 
+	"github.com/flare-foundation/go-flare-common/pkg/logger"
 	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/framework"
 	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/indexer"
-	"gitlab.com/flarenetwork/libs/go-flare-common/pkg/logger"
 )
-
-var log = logger.GetLogger()
 
 func main() {
 	input := framework.Input[dbBlock, ExampleConfig, dbTransaction]{
@@ -17,7 +15,7 @@ func main() {
 	}
 
 	if err := framework.Run(input); err != nil {
-		log.Fatal(err)
+		logger.Fatal(err)
 	}
 }
 

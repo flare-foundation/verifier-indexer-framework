@@ -5,14 +5,12 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	"github.com/flare-foundation/go-flare-common/pkg/logger"
 	"github.com/pkg/errors"
 	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/config"
 	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/database"
-	"gitlab.com/flarenetwork/libs/go-flare-common/pkg/logger"
 	"golang.org/x/sync/errgroup"
 )
-
-var log = logger.GetLogger()
 
 type BlockchainClient[B database.Block, T database.Transaction] interface {
 	GetLatestBlockInfo(context.Context) (*BlockInfo, error)
@@ -91,7 +89,7 @@ func (ix *Indexer[B, T]) Run(ctx context.Context) error {
 			},
 			ix.newBackoff(),
 			func(err error, d time.Duration) {
-				log.Errorf("indexer update chain state error: %v. Will retry after %v", err, d)
+				logger.Errorf("indexer update chain state error: %v. Will retry after %v", err, d)
 			},
 		)
 		if err != nil {
@@ -112,7 +110,7 @@ func (ix *Indexer[B, T]) Run(ctx context.Context) error {
 				},
 				ix.newBackoff(),
 				func(err error, d time.Duration) {
-					log.Errorf("indexer history drop error: %v. Will retry after %v", err, d)
+					logger.Errorf("indexer history drop error: %v. Will retry after %v", err, d)
 				},
 			)
 			if err != nil {
@@ -139,14 +137,14 @@ func (ix *Indexer[B, T]) Run(ctx context.Context) error {
 					return err
 				}
 
-				log.Infof("successfully processed up to block %d", results.state.LastIndexedBlockNumber)
+				logger.Infof("successfully processed up to block %d", results.state.LastIndexedBlockNumber)
 				state = results.state
 
 				return nil
 			},
 			ix.newBackoff(),
 			func(err error, d time.Duration) {
-				log.Errorf("indexer iteration error: %v. Will retry after %v", err, d)
+				logger.Errorf("indexer iteration error: %v. Will retry after %v", err, d)
 			},
 		)
 		if err != nil {
@@ -164,7 +162,7 @@ func (ix *Indexer[B, T]) initialSetup(ctx context.Context, state *database.State
 		}
 
 		ix.startBlockNumber = newStartBlockNumber
-		log.Infof("new starting block number set to %d due to history drop", ix.startBlockNumber)
+		logger.Infof("new starting block number set to %d due to history drop", ix.startBlockNumber)
 	}
 
 	return nil
@@ -182,7 +180,7 @@ func (ix *Indexer[B, T]) runIteration(
 		return nil, nil
 	}
 
-	log.Debugf(
+	logger.Debugf(
 		"indexing from block %d to %d, latest block on chain %d",
 		blkRange.start, blkRange.end-1, state.LastChainBlockNumber,
 	)
@@ -292,14 +290,14 @@ func (ix *Indexer[B, T]) saveData(ctx context.Context, results *iterationResult[
 		}
 	}
 
-	log.Debugf("fetched %d blocks with %d transactions from the chain", len(results.blockResults), len(transactions))
+	logger.Debugf("fetched %d blocks with %d transactions from the chain", len(results.blockResults), len(transactions))
 
 	err := ix.db.SaveAllEntities(ctx, blocks, transactions, results.state)
 	if err != nil {
 		return err
 	}
 
-	log.Debug("data saved to the DB")
+	logger.Debug("data saved to the DB")
 
 	return nil
 }

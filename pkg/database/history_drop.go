@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 
+	"github.com/flare-foundation/go-flare-common/pkg/logger"
 	"github.com/pkg/errors"
 	"gorm.io/gorm"
 )
@@ -57,7 +58,7 @@ func (db *DB[B, T]) DropHistoryIteration(
 		return nil
 	})
 
-	log.Infof("deleted blocks up to index %d", newState.FirstIndexedBlockNumber)
+	logger.Infof("deleted blocks up to index %d", newState.FirstIndexedBlockNumber)
 
 	return &newState, err
 }

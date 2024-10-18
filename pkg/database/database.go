@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"net/url"
 
+	"github.com/flare-foundation/go-flare-common/pkg/logger"
 	"github.com/pkg/errors"
 	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/config"
-	"gitlab.com/flarenetwork/libs/go-flare-common/pkg/logger"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -20,8 +20,6 @@ const (
 	transactionBatchSize = 1000
 	globalStateID        = 1
 )
-
-var log = logger.GetLogger()
 
 type ExternalEntities[B Block, T Transaction] struct {
 	Block       *B
@@ -38,10 +36,10 @@ func New[B Block, T Transaction](cfg *config.DB, entities ExternalEntities[B, T]
 		return nil, err
 	}
 
-	log.Debug("connected to the DB")
+	logger.Debug("connected to the DB")
 
 	if cfg.DropTableAtStart {
-		log.Info("DB tables dropped at start")
+		logger.Info("DB tables dropped at start")
 
 		err = db.Migrator().DropTable(State{}, entities.Block, entities.Transaction)
 		if err != nil {
@@ -53,7 +51,7 @@ func New[B Block, T Transaction](cfg *config.DB, entities ExternalEntities[B, T]
 		return nil, err
 	}
 
-	log.Debug("migrated DB entities")
+	logger.Debug("migrated DB entities")
 
 	return &DB[B, T]{g: db}, err
 }
