@@ -13,8 +13,6 @@ require (
 	gorm.io/gorm v1.25.11
 )
 
-// replace gitlab.com/flarenetwork/libs/go-flare-common => ../../go-flare-common
-
 require (
 	github.com/alexflint/go-scalar v1.2.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
