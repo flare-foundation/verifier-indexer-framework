@@ -3,8 +3,8 @@ package database
 import (
 	"context"
 
+	"github.com/flare-foundation/go-flare-common/pkg/logger"
 	"github.com/pkg/errors"
-	"gitlab.com/flarenetwork/libs/go-flare-common/pkg/logger"
 	"gorm.io/gorm"
 )
 

@@ -2,7 +2,7 @@ package config
 
 import (
 	"github.com/BurntSushi/toml"
-	"gitlab.com/flarenetwork/libs/go-flare-common/pkg/logger"
+	"github.com/flare-foundation/go-flare-common/pkg/logger"
 )
 
 func ReadFile(filepath string, cfg interface{}) error {

@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 
+	"github.com/flare-foundation/go-flare-common/pkg/logger"
 	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/framework"
 	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/indexer"
-	"gitlab.com/flarenetwork/libs/go-flare-common/pkg/logger"
 )
 
 func main() {

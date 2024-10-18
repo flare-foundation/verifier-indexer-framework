@@ -5,8 +5,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/flare-foundation/go-flare-common/pkg/logger"
 	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/database"
-	"gitlab.com/flarenetwork/libs/go-flare-common/pkg/logger"
 )
 
 func (ix *Indexer[B, T]) shouldRunHistoryDrop(state *database.State) bool {

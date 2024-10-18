@@ -5,13 +5,12 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	"github.com/flare-foundation/go-flare-common/pkg/logger"
 	"github.com/pkg/errors"
 	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/config"
 	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/database"
-	"gitlab.com/flarenetwork/libs/go-flare-common/pkg/logger"
 	"golang.org/x/sync/errgroup"
 )
-
 
 type BlockchainClient[B database.Block, T database.Transaction] interface {
 	GetLatestBlockInfo(context.Context) (*BlockInfo, error)

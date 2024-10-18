@@ -5,9 +5,9 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	"github.com/flare-foundation/go-flare-common/pkg/logger"
 	"github.com/pkg/errors"
 	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/database"
-	"gitlab.com/flarenetwork/libs/go-flare-common/pkg/logger"
 )
 
 type blockchainWithBackoff[B database.Block, T database.Transaction] struct {

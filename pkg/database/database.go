@@ -7,7 +7,7 @@ import (
 
 	"github.com/pkg/errors"
 	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/config"
-	"gitlab.com/flarenetwork/libs/go-flare-common/pkg/logger"
+	"github.com/flare-foundation/go-flare-common/pkg/logger"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"

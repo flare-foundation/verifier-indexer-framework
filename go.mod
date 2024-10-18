@@ -6,14 +6,14 @@ require (
 	github.com/BurntSushi/toml v1.4.0
 	github.com/alexflint/go-arg v1.5.1
 	github.com/cenkalti/backoff/v4 v4.3.0
+	github.com/flare-foundation/go-flare-common v0.1.3
 	github.com/pkg/errors v0.9.1
-	gitlab.com/flarenetwork/libs/go-flare-common v0.0.0-00010101000000-000000000000
 	golang.org/x/sync v0.8.0
 	gorm.io/driver/postgres v1.5.9
 	gorm.io/gorm v1.25.11
 )
 
-replace gitlab.com/flarenetwork/libs/go-flare-common => ../../go-flare-common
+// replace gitlab.com/flarenetwork/libs/go-flare-common => ../../go-flare-common
 
 require (
 	github.com/alexflint/go-scalar v1.2.0 // indirect

@@ -4,10 +4,10 @@ import (
 	"context"
 
 	"github.com/alexflint/go-arg"
+	"github.com/flare-foundation/go-flare-common/pkg/logger"
 	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/config"
 	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/database"
 	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/indexer"
-	"gitlab.com/flarenetwork/libs/go-flare-common/pkg/logger"
 )
 
 type CLIArgs struct {
