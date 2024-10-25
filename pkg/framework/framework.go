@@ -21,7 +21,10 @@ type Input[B database.Block, C any, T database.Transaction] struct {
 
 func Run[B database.Block, C any, T database.Transaction](input Input[B, C, T]) error {
 	var args CLIArgs
-	arg.MustParse(&args)
+	err := arg.Parse(&args)
+	if err != nil {
+		logger.Errorf("error parsing config file: %s", err)
+	}
 
 	type Config struct {
 		config.BaseConfig

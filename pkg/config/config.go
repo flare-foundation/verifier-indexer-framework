@@ -37,7 +37,7 @@ type DB struct {
 
 var defaultDB = DB{
 	Host: "localhost",
-	Port: 3306,
+	Port: 5432,
 }
 
 type TimeoutConfig struct {
@@ -55,6 +55,7 @@ type Indexer struct {
 	MaxBlockRange    uint64 `toml:"max_block_range"`
 	MaxConcurrency   int    `toml:"max_concurrency"`
 	StartBlockNumber uint64 `toml:"start_block_number"`
+	EndBlockNumber   uint64 `toml:"end_block_number"`
 }
 
 var defaultIndexer = Indexer{
