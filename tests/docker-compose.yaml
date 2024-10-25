@@ -1,0 +1,13 @@
+version: '3'
+
+services:
+  postgresdb:
+    container_name: indexer_framework_db
+    image: postgres
+    environment:
+      POSTGRES_DB: "indexer_framework_db"
+      POSTGRES_USER: "username"
+      POSTGRES_PASSWORD: "password"
+    ports:
+      - "127.0.0.1:5432:5432"
+

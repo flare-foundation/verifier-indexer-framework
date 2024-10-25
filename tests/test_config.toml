@@ -1,0 +1,22 @@
+[db]
+host = "postgres"
+username = "username"
+password = "password"
+db_name = "indexer_framework_db"
+port = 5432
+drop_table_at_start = true
+history_drop = 200
+
+[indexer]
+confirmations = 0
+max_block_range = 100
+max_concurrency = 10
+start_block_number = 0
+end_block_number = 510
+
+[timeout]
+timeout_millis = 3000
+
+[logger]
+level = "DEBUG"
+console = true

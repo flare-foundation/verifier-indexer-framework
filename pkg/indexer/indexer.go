@@ -47,6 +47,7 @@ func New[B database.Block, T database.Transaction](
 		maxBlockRange:         cfg.Indexer.MaxBlockRange,
 		maxConcurrency:        cfg.Indexer.MaxConcurrency,
 		startBlockNumber:      cfg.Indexer.StartBlockNumber,
+		endBlockNumber:        cfg.Indexer.EndBlockNumber,
 		historyDropInterval:   cfg.DB.HistoryDrop,
 		backoffMaxElapsedTime: backoffMaxElapsedTime,
 	}
@@ -59,6 +60,7 @@ type Indexer[B database.Block, T database.Transaction] struct {
 	maxBlockRange         uint64
 	maxConcurrency        int
 	startBlockNumber      uint64
+	endBlockNumber        uint64
 	historyDropInterval   uint64
 	lastHistoryDropRun    time.Time
 	backoffMaxElapsedTime time.Duration
@@ -72,7 +74,7 @@ func (ix *Indexer[B, T]) Run(ctx context.Context) error {
 		return err
 	}
 
-	if err := ix.initialSetup(ctx, state); err != nil {
+	if err := ix.initialSetup(ctx); err != nil {
 		return err
 	}
 
@@ -150,10 +152,14 @@ func (ix *Indexer[B, T]) Run(ctx context.Context) error {
 		if err != nil {
 			return errors.Wrap(err, "fatal error in indexer")
 		}
+
+		if ix.endBlockNumber != 0 && ix.endBlockNumber <= state.LastIndexedBlockNumber {
+			return nil
+		}
 	}
 }
 
-func (ix *Indexer[B, T]) initialSetup(ctx context.Context, state *database.State) error {
+func (ix *Indexer[B, T]) initialSetup(ctx context.Context) error {
 	if ix.historyDropInterval > 0 {
 		// if the starting block number is set below the interval that gets dropped by history, fix it
 		newStartBlockNumber, err := ix.getMinBlockWithinHistoryInterval(ctx)
@@ -171,7 +177,7 @@ func (ix *Indexer[B, T]) initialSetup(ctx context.Context, state *database.State
 func (ix *Indexer[B, T]) runIteration(
 	ctx context.Context, state *database.State,
 ) (*iterationResult[B, T], error) {
-	blkRange, err := ix.getBlockRange(ctx, state)
+	blkRange, err := ix.getBlockRange(state)
 	if err != nil {
 		return nil, err
 	}
@@ -190,7 +196,7 @@ func (ix *Indexer[B, T]) runIteration(
 		return nil, err
 	}
 
-	newState := updateState(blkRange, blockResults, state)
+	newState := updateState(blockResults, state)
 
 	return &iterationResult[B, T]{
 		blockResults: blockResults,
@@ -207,7 +213,7 @@ func (br blockRange) len() uint64 {
 	return br.end - br.start
 }
 
-func (ix *Indexer[B, T]) getBlockRange(ctx context.Context, state *database.State) (*blockRange, error) {
+func (ix *Indexer[B, T]) getBlockRange(state *database.State) (*blockRange, error) {
 	result := new(blockRange)
 	result.start = ix.getStartBlock(state)
 	result.end = ix.getEndBlock(state, result.start)
@@ -320,7 +326,7 @@ func (ix *Indexer[B, T]) newBackoff() backoff.BackOff {
 }
 
 func updateState[B database.Block, T database.Transaction](
-	blkRange *blockRange, results []BlockResult[B, T], state *database.State,
+	results []BlockResult[B, T], state *database.State,
 ) *database.State {
 	if len(results) == 0 {
 		return state
@@ -331,6 +337,13 @@ func updateState[B database.Block, T database.Transaction](
 	lastIndexedBlock := results[len(results)-1].Block
 	newState.LastIndexedBlockNumber = lastIndexedBlock.GetBlockNumber()
 	newState.LastIndexedBlockTimestamp = lastIndexedBlock.GetTimestamp()
+
+	// handle first iteration
+	if state.LastIndexedBlockNumber == 0 {
+		firstIndexedBlock := results[0].Block
+		newState.FirstIndexedBlockNumber = firstIndexedBlock.GetBlockNumber()
+		newState.FirstIndexedBlockTimestamp = firstIndexedBlock.GetTimestamp()
+	}
 
 	return &newState
 }

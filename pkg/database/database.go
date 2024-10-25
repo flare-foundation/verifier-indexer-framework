@@ -31,7 +31,7 @@ type DB[B Block, T Transaction] struct {
 }
 
 func New[B Block, T Transaction](cfg *config.DB, entities ExternalEntities[B, T]) (*DB[B, T], error) {
-	db, err := connect(cfg)
+	db, err := Connect(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -56,7 +56,7 @@ func New[B Block, T Transaction](cfg *config.DB, entities ExternalEntities[B, T]
 	return &DB[B, T]{g: db}, err
 }
 
-func connect(cfg *config.DB) (*gorm.DB, error) {
+func Connect(cfg *config.DB) (*gorm.DB, error) {
 	dsn := formatDSN(cfg)
 
 	gormLogLevel := getGormLogLevel(cfg)
