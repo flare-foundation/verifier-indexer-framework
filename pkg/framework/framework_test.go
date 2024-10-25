@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flare-foundation/verifier-indexer-framework/pkg/config"
+	"github.com/flare-foundation/verifier-indexer-framework/pkg/database"
+	"github.com/flare-foundation/verifier-indexer-framework/pkg/indexer"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/config"
-	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/database"
-	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/indexer"
 )
 
 const defaultConfigFile = "../../tests/test_config.toml"
