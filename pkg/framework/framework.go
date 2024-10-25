@@ -5,9 +5,9 @@ import (
 
 	"github.com/alexflint/go-arg"
 	"github.com/flare-foundation/go-flare-common/pkg/logger"
-	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/config"
-	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/database"
-	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/indexer"
+	"github.com/flare-foundation/verifier-indexer-framework/pkg/config"
+	"github.com/flare-foundation/verifier-indexer-framework/pkg/database"
+	"github.com/flare-foundation/verifier-indexer-framework/pkg/indexer"
 )
 
 type CLIArgs struct {
