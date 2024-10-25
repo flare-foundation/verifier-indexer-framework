@@ -56,7 +56,7 @@ test:
   services:
     - postgres:latest
   script:
-    - go test -coverpkg=./... -coverprofile=${COVERAGE_FILE} ./...
+    - go test --tags=integration -coverpkg=./... -coverprofile=${COVERAGE_FILE} ./...
     - go tool cover -func=${COVERAGE_FILE}
     - go run github.com/boumenot/gocover-cobertura < ${COVERAGE_FILE} > ${COBERTURA_FILE}
   artifacts:

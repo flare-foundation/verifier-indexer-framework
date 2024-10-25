@@ -21,11 +21,12 @@ type Input[B database.Block, C any, T database.Transaction] struct {
 
 func Run[B database.Block, C any, T database.Transaction](input Input[B, C, T]) error {
 	var args CLIArgs
-	err := arg.Parse(&args)
-	if err != nil {
-		logger.Errorf("error parsing config file: %s", err)
-	}
+	arg.MustParse(&args)
 
+	return runWithArgs(input, args)
+}
+
+func runWithArgs[B database.Block, C any, T database.Transaction](input Input[B, C, T], args CLIArgs) error {
 	type Config struct {
 		config.BaseConfig
 		Blockchain *C

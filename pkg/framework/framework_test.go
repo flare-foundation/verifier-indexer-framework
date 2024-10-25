@@ -1,3 +1,6 @@
+//go:build integration
+// +build integration
+
 package framework
 
 import (
@@ -8,41 +11,43 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flare-foundation/go-flare-common/pkg/logger"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/config"
 	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/database"
 	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/indexer"
 )
 
+const defaultConfigFile = "../../tests/test_config.toml"
+
 func TestRun(t *testing.T) {
+	configFile := os.Getenv("CONFIG_FILE")
+	if configFile == "" {
+		configFile = defaultConfigFile
+	}
+
 	input := Input[dbBlock, ExampleConfig, dbTransaction]{
 		NewBlockchainClient: NewTestBlockchain,
 	}
 
-	if err := Run(input); err != nil {
-		logger.Fatal(err)
-	}
+	args := CLIArgs{ConfigFile: configFile}
+	err := runWithArgs(input, args)
+	require.NoError(t, err)
 
-	configFile := os.Getenv("CONFIG_FILE")
 	cfg := config.BaseConfig{}
-	if err := config.ReadFile(configFile, &cfg); err != nil {
-		logger.Fatal(err)
-	}
+	err = config.ReadFile(configFile, &cfg)
+	require.NoError(t, err)
 
 	db, err := database.Connect(&config.DB{Host: cfg.DB.Host, Port: cfg.DB.Port, Username: cfg.DB.Username, Password: cfg.DB.Password, DBName: cfg.DB.DBName})
-	if err != nil {
-		logger.Fatal(err)
-	}
+	require.NoError(t, err)
+
 	state := new(database.State)
 	err = db.First(state, 1).Error
-	if err != nil {
-		logger.Fatal(err)
-	}
+	require.NoError(t, err)
 
-	require.Equal(t, uint64(300), state.FirstIndexedBlockNumber)
-	require.GreaterOrEqual(t, state.LastIndexedBlockNumber, uint64(510))
-	require.GreaterOrEqual(t, uint64(512), state.LastIndexedBlockNumber)
+	assert.Equal(t, uint64(300), state.FirstIndexedBlockNumber)
+	assert.GreaterOrEqual(t, state.LastIndexedBlockNumber, uint64(510))
+	assert.GreaterOrEqual(t, uint64(512), state.LastIndexedBlockNumber)
 }
 
 type TestBlockchain struct {
