@@ -6,9 +6,9 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/flare-foundation/go-flare-common/pkg/logger"
+	"github.com/flare-foundation/verifier-indexer-framework/pkg/config"
+	"github.com/flare-foundation/verifier-indexer-framework/pkg/database"
 	"github.com/pkg/errors"
-	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/config"
-	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/database"
 	"golang.org/x/sync/errgroup"
 )
 

@@ -6,8 +6,8 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/flare-foundation/go-flare-common/pkg/logger"
+	"github.com/flare-foundation/verifier-indexer-framework/pkg/database"
 	"github.com/pkg/errors"
-	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/database"
 )
 
 type blockchainWithBackoff[B database.Block, T database.Transaction] struct {

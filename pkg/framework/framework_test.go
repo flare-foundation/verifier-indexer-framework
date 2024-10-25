@@ -9,10 +9,10 @@ import (
 	"time"
 
 	"github.com/flare-foundation/go-flare-common/pkg/logger"
+	"github.com/flare-foundation/verifier-indexer-framework/pkg/config"
+	"github.com/flare-foundation/verifier-indexer-framework/pkg/database"
+	"github.com/flare-foundation/verifier-indexer-framework/pkg/indexer"
 	"github.com/stretchr/testify/require"
-	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/config"
-	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/database"
-	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/indexer"
 )
 
 func TestRun(t *testing.T) {

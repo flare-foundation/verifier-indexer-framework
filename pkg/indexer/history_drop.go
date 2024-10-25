@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/flare-foundation/go-flare-common/pkg/logger"
-	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/database"
+	"github.com/flare-foundation/verifier-indexer-framework/pkg/database"
 )
 
 func (ix *Indexer[B, T]) shouldRunHistoryDrop(state *database.State) bool {

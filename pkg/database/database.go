@@ -6,8 +6,8 @@ import (
 	"net/url"
 
 	"github.com/flare-foundation/go-flare-common/pkg/logger"
+	"github.com/flare-foundation/verifier-indexer-framework/pkg/config"
 	"github.com/pkg/errors"
-	"gitlab.com/flarenetwork/fdc/verifier-indexer-framework/pkg/config"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
