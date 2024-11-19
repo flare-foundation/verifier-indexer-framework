@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"time"
 
 	"github.com/flare-foundation/go-flare-common/pkg/logger"
 	"github.com/pkg/errors"
@@ -39,6 +40,7 @@ func (db *DB[B, T]) DropHistoryIteration(
 			return errors.Wrap(err, "Failed to get first block in the DB")
 		}
 
+		newState.LastHistoryDrop = uint64(time.Now().Unix())
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			newState.FirstIndexedBlockNumber = 0
 			newState.FirstIndexedBlockTimestamp = 0

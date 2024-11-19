@@ -1,7 +1,5 @@
 package database
 
-import "time"
-
 type State struct {
 	ID                         uint64 `gorm:"primaryKey;unique"`
 	LastChainBlockNumber       uint64
@@ -10,7 +8,9 @@ type State struct {
 	LastIndexedBlockTimestamp  uint64
 	FirstIndexedBlockNumber    uint64
 	FirstIndexedBlockTimestamp uint64
-	Updated                    time.Time
+	LastIndexedBlockUpdated    uint64
+	LastChainBlockUpdated      uint64
+	LastHistoryDrop            uint64
 }
 
 type Block interface {

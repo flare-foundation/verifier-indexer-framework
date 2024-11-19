@@ -62,7 +62,6 @@ type Indexer[B database.Block, T database.Transaction] struct {
 	startBlockNumber      uint64
 	endBlockNumber        uint64
 	historyDropInterval   uint64
-	lastHistoryDropRun    time.Time
 	backoffMaxElapsedTime time.Duration
 }
 
@@ -107,7 +106,6 @@ func (ix *Indexer[B, T]) Run(ctx context.Context) error {
 					}
 
 					state = newState
-					ix.lastHistoryDropRun = time.Now()
 					return nil
 				},
 				ix.newBackoff(),
@@ -309,12 +307,14 @@ func (ix *Indexer[B, T]) saveData(ctx context.Context, results *iterationResult[
 }
 
 func (ix *Indexer[B, T]) updateChainState(ctx context.Context, state *database.State) (*database.State, error) {
+	newState := *state
+	newState.LastChainBlockUpdated = uint64(time.Now().Unix())
+
 	blockInfo, err := ix.blockchain.GetLatestBlockInfo(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	newState := *state
 	newState.LastChainBlockNumber = blockInfo.BlockNumber
 	newState.LastChainBlockTimestamp = blockInfo.Timestamp
 
@@ -344,6 +344,8 @@ func updateState[B database.Block, T database.Transaction](
 		newState.FirstIndexedBlockNumber = firstIndexedBlock.GetBlockNumber()
 		newState.FirstIndexedBlockTimestamp = firstIndexedBlock.GetTimestamp()
 	}
+
+	newState.LastIndexedBlockUpdated = uint64(time.Now().Unix())
 
 	return &newState
 }
