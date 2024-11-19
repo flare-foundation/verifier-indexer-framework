@@ -3,20 +3,17 @@ package indexer
 import (
 	"context"
 	"sort"
-	"time"
 
 	"github.com/flare-foundation/go-flare-common/pkg/logger"
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/database"
 )
 
 func (ix *Indexer[B, T]) shouldRunHistoryDrop(state *database.State) bool {
-	if ix.historyDropInterval == 0 {
+	if ix.historyDropInterval == 0 || state.LastChainBlockTimestamp < state.LastHistoryDrop {
 		return false
 	}
 
-	lastChainBlockTimestamp := time.Unix(int64(state.LastChainBlockTimestamp), 0)
-
-	return lastChainBlockTimestamp.Sub(ix.lastHistoryDropRun) >= time.Duration(ix.historyDropInterval)*time.Second
+	return state.LastChainBlockTimestamp-state.LastHistoryDrop >= ix.historyDropInterval
 }
 
 func (ix *Indexer[B, T]) runHistoryDrop(
