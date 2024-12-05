@@ -1,13 +1,16 @@
 package config
 
 import (
+	"os"
+
 	"github.com/BurntSushi/toml"
 	"github.com/flare-foundation/go-flare-common/pkg/logger"
+	"github.com/pkg/errors"
 )
 
-func ReadFile(filepath string, cfg interface{}) error {
-	_, err := toml.DecodeFile(filepath, cfg)
-	return err
+var envOverrides = map[string]func(*BaseConfig, string){
+	"DB_USERNAME": func(c *BaseConfig, v string) { c.DB.Username = v },
+	"DB_PASSWORD": func(c *BaseConfig, v string) { c.DB.Password = v },
 }
 
 type BaseConfig struct {
@@ -59,7 +62,27 @@ type Indexer struct {
 }
 
 var defaultIndexer = Indexer{
-	Confirmations:  1,
 	MaxBlockRange:  1000,
 	MaxConcurrency: 8,
+}
+
+func ReadFile(filepath string, cfg interface{}) error {
+	_, err := toml.DecodeFile(filepath, cfg)
+	return err
+}
+
+func ApplyEnvOverrides(cfg *BaseConfig) {
+	for env, override := range envOverrides {
+		if val, ok := os.LookupEnv(env); ok {
+			override(cfg, val)
+		}
+	}
+}
+
+func CheckParameters(cfg *BaseConfig) error {
+	if cfg.Indexer.Confirmations == 0 {
+		return errors.New("number of confirmations should be set to a positive integer")
+	}
+
+	return nil
 }

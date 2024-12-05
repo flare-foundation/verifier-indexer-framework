@@ -40,6 +40,12 @@ func runWithArgs[B database.Block, C any, T database.Transaction](input Input[B,
 		return err
 	}
 
+	config.ApplyEnvOverrides(&cfg.BaseConfig)
+
+	if err := config.CheckParameters(&cfg.BaseConfig); err != nil {
+		return err
+	}
+
 	logger.Set(cfg.Logger)
 
 	db, err := database.New(&cfg.DB, database.ExternalEntities[B, T]{
