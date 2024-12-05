@@ -37,6 +37,10 @@ func New[B database.Block, T database.Transaction](
 	cfg *config.BaseConfig, db *database.DB[B, T], blockchain BlockchainClient[B, T],
 ) Indexer[B, T] {
 	backoffMaxElapsedTime := time.Duration(cfg.Timeout.BackoffMaxElapsedTimeSeconds) * time.Second
+	historyDropFrequency := cfg.DB.HistoryDropFrequency
+	if historyDropFrequency == 0 {
+		historyDropFrequency = cfg.DB.HistoryDrop
+	}
 
 	return Indexer[B, T]{
 		blockchain: newBlockchainWithBackoff(
@@ -49,6 +53,7 @@ func New[B database.Block, T database.Transaction](
 		startBlockNumber:      cfg.Indexer.StartBlockNumber,
 		endBlockNumber:        cfg.Indexer.EndBlockNumber,
 		historyDropInterval:   cfg.DB.HistoryDrop,
+		historyDropFrequency:  historyDropFrequency,
 		backoffMaxElapsedTime: backoffMaxElapsedTime,
 	}
 }
@@ -62,6 +67,7 @@ type Indexer[B database.Block, T database.Transaction] struct {
 	startBlockNumber      uint64
 	endBlockNumber        uint64
 	historyDropInterval   uint64
+	historyDropFrequency  uint64
 	backoffMaxElapsedTime time.Duration
 }
 
@@ -70,10 +76,6 @@ func (ix *Indexer[B, T]) Run(ctx context.Context) error {
 
 	state, err := ix.db.GetState(ctx)
 	if err != nil {
-		return err
-	}
-
-	if err := ix.initialSetup(ctx); err != nil {
 		return err
 	}
 
@@ -116,6 +118,13 @@ func (ix *Indexer[B, T]) Run(ctx context.Context) error {
 			if err != nil {
 				return errors.Wrap(err, "fatal error in indexer")
 			}
+
+			// in case the history drop dropped all the blocks
+			if state.LastIndexedBlockNumber == 0 {
+				if err := ix.updateStartBlock(ctx); err != nil {
+					return err
+				}
+			}
 		}
 
 		err = backoff.RetryNotify(
@@ -157,7 +166,7 @@ func (ix *Indexer[B, T]) Run(ctx context.Context) error {
 	}
 }
 
-func (ix *Indexer[B, T]) initialSetup(ctx context.Context) error {
+func (ix *Indexer[B, T]) updateStartBlock(ctx context.Context) error {
 	if ix.historyDropInterval > 0 {
 		// if the starting block number is set below the interval that gets dropped by history, fix it
 		newStartBlockNumber, err := ix.getMinBlockWithinHistoryInterval(ctx)
