@@ -28,14 +28,15 @@ var DefaultBaseConfig = BaseConfig{
 }
 
 type DB struct {
-	Host             string `toml:"host"`
-	Port             int    `toml:"port"`
-	Username         string `toml:"username"`
-	Password         string `toml:"password"`
-	DBName           string `toml:"db_name"`
-	LogQueries       bool   `toml:"log_queries"`
-	DropTableAtStart bool   `toml:"drop_table_at_start"`
-	HistoryDrop      uint64 `toml:"history_drop"`
+	Host                 string `toml:"host"`
+	Port                 int    `toml:"port"`
+	Username             string `toml:"username"`
+	Password             string `toml:"password"`
+	DBName               string `toml:"db_name"`
+	LogQueries           bool   `toml:"log_queries"`
+	DropTableAtStart     bool   `toml:"drop_table_at_start"`
+	HistoryDrop          uint64 `toml:"history_drop"`
+	HistoryDropFrequency uint64 `toml:"history_drop_frequency"`
 }
 
 var defaultDB = DB{
