@@ -232,7 +232,7 @@ func (ix *Indexer[B, T]) getStartBlock(state *database.State) uint64 {
 }
 
 func (ix *Indexer[B, T]) getEndBlock(state *database.State, start uint64) uint64 {
-	latestConfirmedNum := state.LastChainBlockNumber - ix.confirmations
+	latestConfirmedNum := state.LastChainBlockNumber - ix.confirmations + 1
 	if latestConfirmedNum < start {
 		return latestConfirmedNum + 1
 	}
