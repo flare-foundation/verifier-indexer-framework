@@ -16,6 +16,7 @@ type BlockchainClient[B database.Block, T database.Transaction] interface {
 	GetLatestBlockInfo(context.Context) (*BlockInfo, error)
 	GetBlockResult(context.Context, uint64) (*BlockResult[B, T], error)
 	GetBlockTimestamp(context.Context, uint64) (uint64, error)
+	GetServerInfo(context.Context) (string, error)
 }
 
 type BlockInfo struct {
@@ -217,6 +218,11 @@ type blockRange struct {
 }
 
 func (br blockRange) len() uint64 {
+	// this should never happen, safety check
+	if br.start > br.end {
+		return 0
+	}
+
 	return br.end - br.start
 }
 
@@ -243,7 +249,7 @@ func (ix *Indexer[B, T]) getStartBlock(state *database.State) uint64 {
 func (ix *Indexer[B, T]) getEndBlock(state *database.State, start uint64) uint64 {
 	latestConfirmedNum := state.LastChainBlockNumber - ix.confirmations + 1
 	if latestConfirmedNum < start {
-		return latestConfirmedNum + 1
+		return start
 	}
 
 	numBlocks := latestConfirmedNum + 1 - start
@@ -261,9 +267,6 @@ func (ix *Indexer[B, T]) getBlockResults(
 	eg, ctx := errgroup.WithContext(ctx)
 
 	l := blkRange.len()
-	if l < 1 {
-		return nil, nil
-	}
 
 	results := make([]BlockResult[B, T], l)
 

@@ -63,7 +63,38 @@ func runWithArgs[B database.Block, C any, T database.Transaction](input Input[B,
 
 	ctx := context.Background()
 
+	err = saveVersion(ctx, db, bc, &cfg.BaseConfig)
+	if err != nil {
+		return err
+	}
+
 	indexer := indexer.New(&cfg.BaseConfig, db, bc)
 
 	return indexer.Run(ctx)
+}
+
+func saveVersion[B database.Block, T database.Transaction](
+	ctx context.Context, db *database.DB[B, T], blockchain indexer.BlockchainClient[B, T], cfg *config.BaseConfig,
+) error {
+	version := database.InitVersion()
+	version.NumConfirmations = cfg.Indexer.Confirmations
+	version.HistorySeconds = cfg.DB.HistoryDrop
+
+	buildVersion, err := config.ReadBuildVersion()
+	if err != nil {
+		logger.Warn("failed to read the project build info")
+	} else {
+		version.GitTag = buildVersion.GitTag
+		version.GitHash = buildVersion.GitHash
+		version.BuildDate = buildVersion.BuildDate
+	}
+
+	nodeVersion, err := blockchain.GetServerInfo(ctx)
+	if err != nil {
+		logger.Warn("failed to fetch blockchain node info")
+	} else {
+		version.NodeVersion = nodeVersion
+	}
+
+	return db.SaveVersion(ctx, version)
 }

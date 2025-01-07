@@ -82,6 +82,10 @@ func (e TestBlockchain) GetBlockTimestamp(ctx context.Context, blockNum uint64) 
 	return blockNum + 500, nil
 }
 
+func (e TestBlockchain) GetServerInfo(ctx context.Context) (string, error) {
+	return "0.0.1_test", nil
+}
+
 type ExampleConfig struct{}
 
 type dbBlock struct {
