@@ -37,6 +37,10 @@ func (e ExampleBlockchain) GetBlockTimestamp(context.Context, uint64) (uint64, e
 	return 0, errors.New("not implemented")
 }
 
+func (e ExampleBlockchain) GetServerInfo(context.Context) (string, error) {
+	return "", errors.New("not implemented")
+}
+
 type ExampleConfig struct{}
 
 type dbBlock struct{}

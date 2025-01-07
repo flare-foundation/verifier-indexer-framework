@@ -19,6 +19,7 @@ const (
 	tcp                  = "tcp"
 	transactionBatchSize = 1000
 	globalStateID        = 1
+	globalVersionID      = 1
 )
 
 type ExternalEntities[B Block, T Transaction] struct {
@@ -28,6 +29,18 @@ type ExternalEntities[B Block, T Transaction] struct {
 
 type DB[B Block, T Transaction] struct {
 	g *gorm.DB
+}
+
+func initState() *State {
+	return &State{
+		ID: globalStateID,
+	}
+}
+
+func InitVersion() *Version {
+	return &Version{
+		ID: globalVersionID,
+	}
 }
 
 func New[B Block, T Transaction](cfg *config.DB, entities ExternalEntities[B, T]) (*DB[B, T], error) {
@@ -47,7 +60,7 @@ func New[B Block, T Transaction](cfg *config.DB, entities ExternalEntities[B, T]
 		}
 	}
 
-	if err := db.AutoMigrate(State{}, entities.Block, entities.Transaction); err != nil {
+	if err := db.AutoMigrate(State{}, Version{}, entities.Block, entities.Transaction); err != nil {
 		return nil, err
 	}
 
@@ -101,12 +114,6 @@ func (db *DB[B, T]) GetState(ctx context.Context) (*State, error) {
 	return state, nil
 }
 
-func initState() *State {
-	return &State{
-		ID: globalStateID,
-	}
-}
-
 func (db *DB[B, T]) SaveAllEntities(
 	ctx context.Context, blocks []*B, transactions []*T, state *State,
 ) error {
@@ -138,4 +145,10 @@ func (db *DB[B, T]) SaveAllEntities(
 
 		return nil
 	})
+}
+
+func (db *DB[B, T]) SaveVersion(
+	ctx context.Context, version *Version,
+) error {
+	return db.g.WithContext(ctx).Save(version).Error
 }

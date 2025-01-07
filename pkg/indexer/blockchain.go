@@ -94,6 +94,28 @@ func (bwb *blockchainWithBackoff[B, T]) GetBlockTimestamp(ctx context.Context, b
 	return timestamp, nil
 }
 
+func (bwb *blockchainWithBackoff[B, T]) GetServerInfo(ctx context.Context) (string, error) {
+	var serverInfo string
+	err := backoff.RetryNotify(
+		func() (err error) {
+			ctx, cancel := context.WithTimeout(ctx, bwb.requestTimeout)
+			defer cancel()
+
+			serverInfo, err = bwb.client.GetServerInfo(ctx)
+			return err
+		},
+		bwb.newBackoff(ctx),
+		func(err error, d time.Duration) {
+			logger.Errorf("GetServerInfo error: %v. Will retry after %v", err, d)
+		},
+	)
+	if err != nil {
+		return "", errors.Wrap(err, "GetServerInfo failed")
+	}
+
+	return serverInfo, nil
+}
+
 func (bwb *blockchainWithBackoff[B, T]) newBackoff(ctx context.Context) backoff.BackOff {
 	return backoff.WithContext(backoff.NewExponentialBackOff(
 		backoff.WithMaxElapsedTime(bwb.maxElapsedTime),
