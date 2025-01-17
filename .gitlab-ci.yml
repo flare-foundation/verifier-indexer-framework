@@ -2,7 +2,6 @@ variables:
   GOPATH: /go
   GOLANG_VERSION: "1.23.0"
   GOLINT_VERSION: "v1.60.3"
-  GOPRIVATE: "gitlab.com/flarenetwork/*,gitlab.com/ryancollingham/*"
   COVERAGE_FILE: "coverage.out"
   COBERTURA_FILE: "coverage.xml"
 
@@ -16,13 +15,13 @@ variables:
 workflow:
   rules:
     - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
+    - if: $CI_PIPELINE_SOURCE == 'push'
     - if: $CI_COMMIT_TAG
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
 default:
   before_script:
     - echo -e "machine gitlab.com\nlogin gitlab-ci-token\npassword ${CI_JOB_TOKEN}" > ~/.netrc
-
 
 build:
   stage: build
