@@ -6,7 +6,7 @@ require (
 	github.com/BurntSushi/toml v1.4.0
 	github.com/alexflint/go-arg v1.5.1
 	github.com/cenkalti/backoff/v4 v4.3.0
-	github.com/flare-foundation/go-flare-common v0.1.3
+	github.com/flare-foundation/go-flare-common v1.0.2
 	github.com/pkg/errors v0.9.1
 	github.com/stretchr/testify v1.9.0
 	golang.org/x/sync v0.8.0
