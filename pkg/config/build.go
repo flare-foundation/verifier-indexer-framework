@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"time"
+	"strings"
 )
 
 const (
@@ -31,14 +32,14 @@ func ReadBuildVersion() (*BuildConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	buildDate, err := time.Parse(time.RFC3339, string(projectBuildDateBytes))
+	buildDate, err := time.Parse(time.RFC3339, strings.TrimSpace(string(projectBuildDateBytes)))
 	if err != nil {
 		return nil, err
 	}
 
 	return &BuildConfig{
-		GitTag:    string(projectVersionBytes),
-		GitHash:   string(projectCommitBytes),
+		GitTag:    strings.TrimSpace(string(projectVersionBytes)),
+		GitHash:   strings.TrimSpace(string(projectCommitBytes)),
 		BuildDate: uint64(buildDate.Unix()),
 	}, nil
 }
