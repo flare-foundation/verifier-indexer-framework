@@ -49,6 +49,16 @@ func (ix *Indexer[B, T]) getMinBlockWithinHistoryInterval(
 
 	// find the first block within the history drop interval using binary search
 	i := sort.Search(int(latestBlock.BlockNumber-ix.startBlockNumber), func(i int) bool {
+		// The err variable comes from the enclosing function. If it has been
+		// set to a non-nil value by a previous iteration of the binary search,
+		// we should not overwrite it. Ideally we would exit the binary search
+		// early, but the sort.Search function does not provide a way to do
+		// that. So instead, we just return false for all future iterations.
+		// The results of the search are meaningless in this case.
+		if err != nil {
+			return false
+		}
+
 		blockNumber := ix.startBlockNumber + uint64(i)
 
 		var blockTime uint64
@@ -59,6 +69,8 @@ func (ix *Indexer[B, T]) getMinBlockWithinHistoryInterval(
 
 		return latestBlock.Timestamp-blockTime <= ix.historyDropInterval
 	})
+
+	// If there was any error during the binary search, return it.
 	if err != nil {
 		return 0, err
 	}
