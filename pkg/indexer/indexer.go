@@ -74,6 +74,7 @@ type Indexer[B database.Block, T database.Transaction] struct {
 
 func (ix *Indexer[B, T]) Run(ctx context.Context) error {
 	upToDateBackoff := backoff.NewExponentialBackOff()
+	historyDropResults := make(chan *database.State, 1)
 
 	state, err := ix.db.GetState(ctx)
 	if err != nil {
@@ -100,32 +101,53 @@ func (ix *Indexer[B, T]) Run(ctx context.Context) error {
 			return errors.Wrap(err, "fatal error in indexer")
 		}
 
-		if ix.shouldRunHistoryDrop(state) {
-			err := backoff.RetryNotify(
-				func() error {
-					newState, err := ix.runHistoryDrop(ctx, state)
-					if err != nil {
-						return err
-					}
-
-					state = newState
-					return nil
-				},
-				ix.newBackoff(),
-				func(err error, d time.Duration) {
-					logger.Errorf("indexer history drop error: %v. Will retry after %v", err, d)
-				},
-			)
-			if err != nil {
-				return errors.Wrap(err, "fatal error in indexer")
+		// Check if history drop results are available each iteration but do
+		// not block.
+		select {
+		case newState := <-historyDropResults:
+			logger.Infof("history drop completed, new state: %+v", newState)
+			if newState.FirstIndexedBlockNumber > state.FirstIndexedBlockNumber {
+				state.FirstIndexedBlockNumber = newState.FirstIndexedBlockNumber
+				state.FirstIndexedBlockTimestamp = newState.FirstIndexedBlockTimestamp
 			}
 
 			// in case the history drop dropped all the blocks
-			if state.LastIndexedBlockNumber == 0 {
+			if newState.LastIndexedBlockNumber == 0 {
+				state.LastIndexedBlockNumber = 0
+				state.LastIndexedBlockTimestamp = 0
+
 				if err := ix.updateStartBlock(ctx); err != nil {
 					return err
 				}
 			}
+
+		default:
+			logger.Debug("waiting for history drop to complete")
+		}
+
+		if ix.shouldRunHistoryDrop(state) {
+			go func() {
+				err := backoff.RetryNotify(
+					func() error {
+						newState, err := ix.runHistoryDrop(ctx, state)
+						if err != nil {
+							return err
+						}
+
+						historyDropResults <- newState
+						return nil
+					},
+					ix.newBackoff(),
+					func(err error, d time.Duration) {
+						logger.Errorf("indexer history drop error: %v. Will retry after %v", err, d)
+					},
+				)
+				if err != nil {
+					logger.Errorf("fatal error in indexer history drop: %v", err)
+					return
+				}
+			}()
+
 		}
 
 		err = backoff.RetryNotify(
