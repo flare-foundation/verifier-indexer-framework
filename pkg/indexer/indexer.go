@@ -104,14 +104,15 @@ func (ix *Indexer[B, T]) Run(ctx context.Context) error {
 
 		if !historyDropRunning && ix.shouldRunHistoryDrop(state) {
 			historyDropRunning = true
-			go func() {
+
+			go func(state database.State) {
 				defer func() {
 					historyDropRunning = false
 				}()
 
 				err := backoff.RetryNotify(
 					func() error {
-						newState, err := ix.runHistoryDrop(ctx, state)
+						newState, err := ix.runHistoryDrop(ctx, &state)
 						if err != nil {
 							return err
 						}
@@ -128,8 +129,7 @@ func (ix *Indexer[B, T]) Run(ctx context.Context) error {
 					logger.Errorf("fatal error in indexer history drop: %v", err)
 					return
 				}
-			}()
-
+			}(*state)
 		}
 
 		// Check if history drop results are available each iteration but do
