@@ -134,28 +134,26 @@ func (ix *Indexer[B, T]) Run(ctx context.Context) error {
 
 		// Check if history drop results are available each iteration but do
 		// not block.
-		if historyDropRunning {
-			select {
-			case newState := <-historyDropResults:
-				logger.Infof("history drop completed, new state: %+v", newState)
-				if newState.FirstIndexedBlockNumber > state.FirstIndexedBlockNumber {
-					state.FirstIndexedBlockNumber = newState.FirstIndexedBlockNumber
-					state.FirstIndexedBlockTimestamp = newState.FirstIndexedBlockTimestamp
-				}
-
-				// in case the history drop dropped all the blocks
-				if newState.LastIndexedBlockNumber == 0 {
-					state.LastIndexedBlockNumber = 0
-					state.LastIndexedBlockTimestamp = 0
-
-					if err := ix.updateStartBlock(ctx); err != nil {
-						return err
-					}
-				}
-
-			default:
-				logger.Debug("waiting for history drop to complete")
+		select {
+		case newState := <-historyDropResults:
+			logger.Infof("history drop completed, new state: %+v", newState)
+			if newState.FirstIndexedBlockNumber > state.FirstIndexedBlockNumber {
+				state.FirstIndexedBlockNumber = newState.FirstIndexedBlockNumber
+				state.FirstIndexedBlockTimestamp = newState.FirstIndexedBlockTimestamp
 			}
+
+			// in case the history drop dropped all the blocks
+			if newState.LastIndexedBlockNumber == 0 {
+				state.LastIndexedBlockNumber = 0
+				state.LastIndexedBlockTimestamp = 0
+
+				if err := ix.updateStartBlock(ctx); err != nil {
+					return err
+				}
+			}
+
+		default:
+			logger.Debug("no history drop results available, continuing with indexing")
 		}
 
 		err = backoff.RetryNotify(
