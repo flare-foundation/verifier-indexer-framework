@@ -21,7 +21,7 @@ func (db *DB[B, T]) DropHistoryIteration(
 	deleteStart := lastBlockTime - intervalSeconds
 
 	// Delete in specified order to not break foreign keys.
-	var deleteOrder []interface{} = []interface{}{
+	deleteOrder := []interface{}{
 		new(B),
 		new(T),
 	}
