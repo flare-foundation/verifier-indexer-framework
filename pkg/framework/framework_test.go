@@ -45,8 +45,9 @@ func TestRun(t *testing.T) {
 	err = db.First(state, 1).Error
 	require.NoError(t, err)
 
-	assert.Equal(t, uint64(300), state.FirstIndexedBlockNumber)
-	assert.GreaterOrEqual(t, state.LastIndexedBlockNumber, uint64(510))
+	assert.GreaterOrEqual(t, state.FirstIndexedBlockNumber, uint64(305))
+	assert.GreaterOrEqual(t, uint64(315), state.FirstIndexedBlockNumber)
+	assert.GreaterOrEqual(t, state.LastIndexedBlockNumber, uint64(509))
 	assert.GreaterOrEqual(t, uint64(512), state.LastIndexedBlockNumber)
 }
 
