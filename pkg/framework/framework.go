@@ -14,33 +14,34 @@ type CLIArgs struct {
 	ConfigFile string `arg:"--config,env:CONFIG_FILE" default:"config.toml"`
 }
 
-type Input[B database.Block, C any, T database.Transaction] struct {
+type Input[B database.Block, C config.EnvOverrideable, T database.Transaction] struct {
 	DefaultConfig       C
-	NewBlockchainClient func(*C) (indexer.BlockchainClient[B, T], error)
+	NewBlockchainClient func(C) (indexer.BlockchainClient[B, T], error)
 }
 
-func Run[B database.Block, C any, T database.Transaction](input Input[B, C, T]) error {
+func Run[B database.Block, C config.EnvOverrideable, T database.Transaction](input Input[B, C, T]) error {
 	var args CLIArgs
 	arg.MustParse(&args)
 
 	return runWithArgs(input, args)
 }
 
-func runWithArgs[B database.Block, C any, T database.Transaction](input Input[B, C, T], args CLIArgs) error {
+func runWithArgs[B database.Block, C config.EnvOverrideable, T database.Transaction](input Input[B, C, T], args CLIArgs) error {
 	type Config struct {
 		config.BaseConfig
-		Blockchain *C
+		Blockchain C
 	}
 
 	cfg := Config{
 		BaseConfig: config.DefaultBaseConfig,
-		Blockchain: &input.DefaultConfig,
+		Blockchain: input.DefaultConfig,
 	}
 	if err := config.ReadFile(args.ConfigFile, &cfg); err != nil {
 		return err
 	}
 
-	config.ApplyEnvOverrides(&cfg.BaseConfig)
+	cfg.ApplyEnvOverrides()
+	cfg.Blockchain.ApplyEnvOverrides()
 
 	if err := config.CheckParameters(&cfg.BaseConfig); err != nil {
 		return err

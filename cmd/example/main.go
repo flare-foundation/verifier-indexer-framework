@@ -10,7 +10,7 @@ import (
 )
 
 func main() {
-	input := framework.Input[dbBlock, ExampleConfig, dbTransaction]{
+	input := framework.Input[dbBlock, *ExampleConfig, dbTransaction]{
 		NewBlockchainClient: NewExample,
 	}
 
@@ -42,6 +42,9 @@ func (e ExampleBlockchain) GetServerInfo(context.Context) (string, error) {
 }
 
 type ExampleConfig struct{}
+
+// No-op - required for interface
+func (c *ExampleConfig) ApplyEnvOverrides() {}
 
 type dbBlock struct{}
 
