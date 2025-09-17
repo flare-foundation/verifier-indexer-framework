@@ -72,7 +72,11 @@ func ReadFile(filepath string, cfg interface{}) error {
 	return err
 }
 
-func ApplyEnvOverrides(cfg *BaseConfig) {
+type EnvOverrideable interface {
+	ApplyEnvOverrides()
+}
+
+func (cfg *BaseConfig) ApplyEnvOverrides() {
 	for env, override := range envOverrides {
 		if val, ok := os.LookupEnv(env); ok {
 			override(cfg, val)

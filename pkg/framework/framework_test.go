@@ -26,7 +26,7 @@ func TestRun(t *testing.T) {
 		configFile = defaultConfigFile
 	}
 
-	input := Input[dbBlock, ExampleConfig, dbTransaction]{
+	input := Input[dbBlock, *ExampleConfig, dbTransaction]{
 		NewBlockchainClient: NewTestBlockchain,
 	}
 
@@ -88,6 +88,9 @@ func (e TestBlockchain) GetServerInfo(ctx context.Context) (string, error) {
 }
 
 type ExampleConfig struct{}
+
+// Required for interface but not used in this example
+func (e *ExampleConfig) ApplyEnvOverrides() {}
 
 type dbBlock struct {
 	Hash        string `gorm:"primaryKey;type:varchar(64)"`
