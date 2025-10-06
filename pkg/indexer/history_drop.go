@@ -13,7 +13,16 @@ func (ix *Indexer[B, T]) shouldRunHistoryDrop(state *database.State) bool {
 		return false
 	}
 
-	return state.LastChainBlockTimestamp-state.LastHistoryDrop >= ix.historyDropFrequency
+	if state.LastChainBlockTimestamp-state.LastHistoryDrop >= ix.historyDropFrequency {
+		logger.Debugf(
+			"history drop should run: last drop %d, last block %d, frequency %d",
+			state.LastHistoryDrop, state.LastChainBlockTimestamp, ix.historyDropFrequency,
+		)
+
+		return true
+	}
+
+	return false
 }
 
 func (ix *Indexer[B, T]) runHistoryDrop(
