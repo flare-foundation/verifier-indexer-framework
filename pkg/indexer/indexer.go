@@ -137,6 +137,8 @@ func (ix *Indexer[B, T]) Run(ctx context.Context) error {
 		select {
 		case newState := <-historyDropResults:
 			logger.Infof("history drop completed, new state: %+v", newState)
+			state.LastHistoryDrop = newState.LastHistoryDrop
+
 			if newState.FirstIndexedBlockNumber > state.FirstIndexedBlockNumber {
 				state.FirstIndexedBlockNumber = newState.FirstIndexedBlockNumber
 				state.FirstIndexedBlockTimestamp = newState.FirstIndexedBlockTimestamp
@@ -153,7 +155,6 @@ func (ix *Indexer[B, T]) Run(ctx context.Context) error {
 			}
 
 		default:
-			logger.Debug("no history drop results available, continuing with indexing")
 		}
 
 		err = backoff.RetryNotify(
