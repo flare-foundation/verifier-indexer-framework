@@ -154,37 +154,47 @@ func (ix *Indexer[B, T]) maybeRunHistoryDrop(
 	historyDropResults chan *database.State,
 	state *database.State,
 ) {
-	if historyDropLock.TryLock() {
-		if !ix.shouldRunHistoryDrop(state) {
-			// Nothing to do so release the lock
-			historyDropLock.Unlock()
-		} else {
-			go func(state database.State) {
-				var newState *database.State
-				defer func() {
-					historyDropResults <- newState
-				}()
-
-				err := backoff.RetryNotify(
-					func() (err error) {
-						newState, err = ix.runHistoryDrop(ctx, &state)
-						return err
-					},
-					ix.newBackoff(),
-					func(err error, d time.Duration) {
-						logger.Errorf("indexer history drop error: %v. Will retry after %v", err, d)
-					},
-				)
-				if err != nil {
-					logger.Errorf("fatal error in indexer history drop: %v", err)
-					return
-				}
-			}(*state)
-
-			// The lock will stay held until the history drop results are
-			// returned via the results channel.
-		}
+	if !historyDropLock.TryLock() {
+		// Another history drop is in progress
+		return
 	}
+
+	if !ix.shouldRunHistoryDrop(state) {
+		// Nothing to do so release the lock
+		historyDropLock.Unlock()
+		return
+	}
+
+	// Start the history drop in a separate goroutine.
+	//
+	// We pass a copy of the current state by value to avoid data races.
+	//
+	// Updates to the state will be applied when the results
+	// are returned via the results channel.
+	go func(state database.State) {
+		var newState *database.State
+		defer func() {
+			historyDropResults <- newState
+		}()
+
+		err := backoff.RetryNotify(
+			func() (err error) {
+				newState, err = ix.runHistoryDrop(ctx, &state)
+				return err
+			},
+			ix.newBackoff(),
+			func(err error, d time.Duration) {
+				logger.Errorf("indexer history drop error: %v. Will retry after %v", err, d)
+			},
+		)
+		if err != nil {
+			logger.Errorf("fatal error in indexer history drop: %v", err)
+			return
+		}
+	}(*state)
+
+	// The lock will stay held until the history drop results are
+	// returned via the results channel.
 }
 
 func (ix *Indexer[B, T]) pollHistoryDropResults(
