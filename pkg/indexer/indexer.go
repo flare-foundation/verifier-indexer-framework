@@ -207,8 +207,10 @@ func (ix *Indexer[B, T]) pollHistoryDropResults(
 	// not block.
 	select {
 	case newState := <-historyDropResults:
+		// Unlock the history drop lock after processing the results.
+		defer historyDropLock.Unlock()
+
 		if newState == nil {
-			historyDropLock.Unlock()
 			return errors.New("history drop failed")
 		}
 
@@ -229,10 +231,6 @@ func (ix *Indexer[B, T]) pollHistoryDropResults(
 				return err
 			}
 		}
-
-		// Unlock the lock acquired before starting the history drop, after
-		// having updated the state.
-		historyDropLock.Unlock()
 
 	// default case to avoid blocking if results not available
 	default:
