@@ -1,6 +1,6 @@
 module github.com/flare-foundation/verifier-indexer-framework
 
-go 1.23.0
+go 1.25.1
 
 require (
 	github.com/BurntSushi/toml v1.4.0

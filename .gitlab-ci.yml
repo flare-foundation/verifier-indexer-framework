@@ -1,6 +1,6 @@
 variables:
   GOPATH: /go
-  GOLANG_VERSION: "1.24.4"
+  GOLANG_VERSION: "1.25.1"
   GOLINT_VERSION: "v2.1.6"
   COVERAGE_FILE: "coverage.out"
   COBERTURA_FILE: "coverage.xml"
