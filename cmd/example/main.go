@@ -43,7 +43,7 @@ func (e ExampleBlockchain) GetServerInfo(context.Context) (string, error) {
 
 type ExampleConfig struct{}
 
-// No-op - required for interface
+// No-op - required for interface.
 func (c *ExampleConfig) ApplyEnvOverrides() {}
 
 type dbBlock struct{}

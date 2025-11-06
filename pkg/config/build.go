@@ -2,8 +2,8 @@ package config
 
 import (
 	"os"
-	"time"
 	"strings"
+	"time"
 )
 
 const (
