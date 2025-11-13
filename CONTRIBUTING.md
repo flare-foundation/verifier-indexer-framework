@@ -5,7 +5,8 @@ All contributions are welcome.
 
 ## Issues
 
-_Sensitive security-related issues should be reported to any of [codeowners](/CODEOWNERS)._
+_Sensitive security-related issues should not be reported publicly.
+See [Security](SECURITY.md)._
 
 To share ideas, considerations, or concerned open an issue.
 Before filing an issue make sure the issue has not been already raised.
@@ -31,7 +32,7 @@ The request must:
 - Compile,
 - Pass all the tests,
 - Pass all the linters,
-- Be based on opened against `main` branch.
+- Be based on and opened against `main` branch.
 
 ## Setting the environment
 
@@ -62,7 +63,7 @@ docker-compose -f tests/docker-compose.yaml up -d
 Then, modify the `tests/test_config.yaml` file to change the `host` field to
 `localhost`.
 
-Finally, you can run the tests with:
+Finally, you can run the integration tests with:
 
 ```bash
 go test --tags=integration ./...
@@ -75,3 +76,17 @@ Run linters (make sure you have [golangci-lint](https://golangci-lint.run/) inst
 ```bash
 golangci-lint run
 ```
+
+The linting configs are specified in [.golangci.yml](.golangci.yml).
+
+## AI Assistance
+
+Any significant use of the AI assistance in the contribution MUST be disclosed in the pull request along with the extent of the use.
+
+An example disclosure:
+
+> This PR was written primarily by Claude Code.
+
+Or a more detailed disclosure:
+
+> I consulted ChatGPT for the following code snippets: ...

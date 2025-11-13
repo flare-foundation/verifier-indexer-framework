@@ -1,6 +1,14 @@
-<p align="left">
-  <a href="https://flare.network/" target="blank"><img src="https://content.flare.network/Flare-2.svg" width="500" height="100" alt="Flare Logo" /></a>
-</p>
+<div align="center">
+  <a href="https://flare.network/" target="blank">
+    <img src="https://content.flare.network/Flare-2.svg" width="300" alt="Flare Logo" />
+  </a>
+  <br/>
+  <a href="CONTRIBUTING.md">Contributing</a>
+  ·
+  <a href="SECURITY.md">Security</a>
+  ·
+  <a href="CHANGELOG.md">Changelog</a>
+</div>
 
 # Verifier Indexer Framework
 
@@ -11,6 +19,8 @@ It assumes that the blockchain contains blocks which are numbered sequentially
 and contain timestamps.
 It is also assumed that each block contains some
 number of transactions, each of which has a unique identifier.
+
+[![API Reference](https://pkg.go.dev/badge/github.com/flare-foundation/verifier-indexer-framework)](https://pkg.go.dev/github.com/flare-foundation/verifier-indexer-framework?tab=doc)
 
 ## Installation
 
