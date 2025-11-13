@@ -61,7 +61,7 @@ func (b dbBlock) HistoryDropOrder() []database.Deletable {
 	return []database.Deletable{emptyBlock}
 }
 
-// Required for Deletable interface
+// TimestampField is required for Deletable interface.
 func (e dbBlock) TimestampField() string {
 	return "timestamp"
 }
