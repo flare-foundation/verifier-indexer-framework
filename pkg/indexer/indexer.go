@@ -83,6 +83,13 @@ func (ix *Indexer[B, T]) Run(ctx context.Context) error {
 		return err
 	}
 
+	startBlockNumber, err := ix.getInitialStartBlockNumber(ctx, state)
+	if err != nil {
+		return errors.Wrap(err, "failed to get initial start block number")
+	}
+
+	ix.startBlockNumber = startBlockNumber
+
 	for {
 		err := backoff.RetryNotify(
 			func() error {
@@ -146,6 +153,29 @@ func (ix *Indexer[B, T]) Run(ctx context.Context) error {
 			return nil
 		}
 	}
+}
+
+func (ix *Indexer[B, T]) getInitialStartBlockNumber(ctx context.Context, state *database.State) (uint64, error) {
+	if state.LastIndexedBlockNumber > 0 {
+		logger.Infof("resuming after last indexed block from the database: %d", state.LastIndexedBlockNumber)
+		return state.LastIndexedBlockNumber + 1, nil
+	}
+
+	// No blocks are indexed yet.
+	// If history drop is disabled, return the configured start index.
+	if ix.historyDropInterval == 0 {
+		logger.Infof("no blocks indexed yet, starting from configured start block number: %d", ix.startBlockNumber)
+		return ix.startBlockNumber, nil
+	}
+
+	// History drop is enabled so calculate the start index based on it.
+	blockNumber, err := ix.getMinBlockWithinHistoryInterval(ctx)
+	if err != nil {
+		return 0, errors.Wrap(err, "failed to calculate start block number based on history drop interval")
+	}
+
+	logger.Infof("no blocks indexed yet, starting from block number based on history drop: %d", blockNumber)
+	return blockNumber, nil
 }
 
 func (ix *Indexer[B, T]) maybeRunHistoryDrop(
@@ -222,33 +252,8 @@ func (ix *Indexer[B, T]) pollHistoryDropResults(
 			state.FirstIndexedBlockTimestamp = newState.FirstIndexedBlockTimestamp
 		}
 
-		// in case the history drop dropped all the blocks
-		if newState.LastIndexedBlockNumber == 0 {
-			state.LastIndexedBlockNumber = 0
-			state.LastIndexedBlockTimestamp = 0
-
-			if err := ix.updateStartBlock(ctx); err != nil {
-				return err
-			}
-		}
-
 	// default case to avoid blocking if results not available
 	default:
-	}
-
-	return nil
-}
-
-func (ix *Indexer[B, T]) updateStartBlock(ctx context.Context) error {
-	if ix.historyDropInterval > 0 {
-		// if the starting block number is set below the interval that gets dropped by history, fix it
-		newStartBlockNumber, err := ix.getMinBlockWithinHistoryInterval(ctx)
-		if err != nil {
-			return err
-		}
-
-		ix.startBlockNumber = newStartBlockNumber
-		logger.Infof("new starting block number set to %d due to history drop", ix.startBlockNumber)
 	}
 
 	return nil
@@ -307,10 +312,6 @@ func (ix *Indexer[B, T]) getBlockRange(state *database.State) (*blockRange, erro
 }
 
 func (ix *Indexer[B, T]) getStartBlock(state *database.State) uint64 {
-	if state == nil {
-		return ix.startBlockNumber
-	}
-
 	if state.LastIndexedBlockNumber < ix.startBlockNumber {
 		return ix.startBlockNumber
 	}
