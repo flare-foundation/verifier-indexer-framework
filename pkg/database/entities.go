@@ -28,6 +28,6 @@ type Block interface {
 	GetBlockNumber() uint64
 }
 
-// TODO empty interface ??
-type Transaction interface {
-}
+type Transaction any
+
+type Event any

@@ -8,7 +8,7 @@ import (
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/database"
 )
 
-func (ix *Indexer[B, T]) shouldRunHistoryDrop(state *database.State) bool {
+func (ix *Indexer[B, T, E]) shouldRunHistoryDrop(state *database.State) bool {
 	if ix.historyDropInterval == 0 || state.LastChainBlockTimestamp < state.LastHistoryDrop {
 		return false
 	}
@@ -25,7 +25,7 @@ func (ix *Indexer[B, T]) shouldRunHistoryDrop(state *database.State) bool {
 	return false
 }
 
-func (ix *Indexer[B, T]) runHistoryDrop(
+func (ix *Indexer[B, T, E]) runHistoryDrop(
 	ctx context.Context, state *database.State,
 ) (*database.State, error) {
 	logger.Debugf("running history drop")
@@ -35,7 +35,7 @@ func (ix *Indexer[B, T]) runHistoryDrop(
 	)
 }
 
-func (ix *Indexer[B, T]) getMinBlockWithinHistoryInterval(
+func (ix *Indexer[B, T, E]) getMinBlockWithinHistoryInterval(
 	ctx context.Context,
 ) (uint64, error) {
 	firstBlockTime, err := ix.blockchain.GetBlockTimestamp(ctx, ix.startBlockNumber)

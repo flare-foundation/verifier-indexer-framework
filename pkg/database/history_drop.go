@@ -13,7 +13,7 @@ import (
 // timeouts.
 const deleteBatchSize = 1000
 
-func (db *DB[B, T]) DropHistoryIteration(
+func (db *DB[B, T, E]) DropHistoryIteration(
 	ctx context.Context,
 	state *State,
 	intervalSeconds, lastBlockTime uint64,
@@ -21,9 +21,18 @@ func (db *DB[B, T]) DropHistoryIteration(
 	deleteStart := lastBlockTime - intervalSeconds
 
 	// Delete in specified order to not break foreign keys.
-	deleteOrder := []interface{}{
-		new(B),
-		new(T),
+	var deleteOrder []any
+	if isEmptyStruct[E]() {
+		deleteOrder = []any{
+			new(T),
+			new(B),
+		}
+	} else {
+		deleteOrder = []any{
+			new(E),
+			new(T),
+			new(B),
+		}
 	}
 	newState := *state
 

@@ -13,9 +13,9 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-type BlockchainClient[B database.Block, T database.Transaction] interface {
+type BlockchainClient[B database.Block, T database.Transaction, E database.Event] interface {
 	GetLatestBlockInfo(context.Context) (*BlockInfo, error)
-	GetBlockResult(context.Context, uint64) (*BlockResult[B, T], error)
+	GetBlockResult(context.Context, uint64) (*BlockResult[B, T, E], error)
 	GetBlockTimestamp(context.Context, uint64) (uint64, error)
 	GetServerInfo(context.Context) (string, error)
 }
@@ -25,26 +25,27 @@ type BlockInfo struct {
 	Timestamp   uint64
 }
 
-type iterationResult[B database.Block, T database.Transaction] struct {
-	blockResults []BlockResult[B, T]
+type iterationResult[B database.Block, T database.Transaction, E database.Event] struct {
+	blockResults []BlockResult[B, T, E]
 	state        *database.State
 }
 
-type BlockResult[B database.Block, T database.Transaction] struct {
+type BlockResult[B database.Block, T database.Transaction, E database.Event] struct {
 	Block        B
 	Transactions []T
+	Events       []E
 }
 
-func New[B database.Block, T database.Transaction](
-	cfg *config.BaseConfig, db *database.DB[B, T], blockchain BlockchainClient[B, T],
-) Indexer[B, T] {
+func New[B database.Block, T database.Transaction, E database.Event](
+	cfg *config.BaseConfig, db *database.DB[B, T, E], blockchain BlockchainClient[B, T, E],
+) Indexer[B, T, E] {
 	backoffMaxElapsedTime := time.Duration(cfg.Timeout.BackoffMaxElapsedTimeSeconds) * time.Second
 	historyDropFrequency := cfg.DB.HistoryDropFrequency
 	if historyDropFrequency == 0 {
 		historyDropFrequency = cfg.DB.HistoryDrop
 	}
 
-	return Indexer[B, T]{
+	return Indexer[B, T, E]{
 		blockchain: newBlockchainWithBackoff(
 			blockchain, backoffMaxElapsedTime, time.Duration(cfg.Timeout.RequestTimeoutMillis)*time.Millisecond,
 		),
@@ -60,10 +61,10 @@ func New[B database.Block, T database.Transaction](
 	}
 }
 
-type Indexer[B database.Block, T database.Transaction] struct {
-	blockchain            BlockchainClient[B, T]
+type Indexer[B database.Block, T database.Transaction, E database.Event] struct {
+	blockchain            BlockchainClient[B, T, E]
 	confirmations         uint64
-	db                    *database.DB[B, T]
+	db                    *database.DB[B, T, E]
 	maxBlockRange         uint64
 	maxConcurrency        int
 	startBlockNumber      uint64
@@ -73,7 +74,7 @@ type Indexer[B database.Block, T database.Transaction] struct {
 	backoffMaxElapsedTime time.Duration
 }
 
-func (ix *Indexer[B, T]) Run(ctx context.Context) error {
+func (ix *Indexer[B, T, E]) Run(ctx context.Context) error {
 	upToDateBackoff := backoff.NewExponentialBackOff()
 	historyDropResults := make(chan *database.State, 1)
 	var historyDropLock sync.Mutex
@@ -148,7 +149,7 @@ func (ix *Indexer[B, T]) Run(ctx context.Context) error {
 	}
 }
 
-func (ix *Indexer[B, T]) maybeRunHistoryDrop(
+func (ix *Indexer[B, T, E]) maybeRunHistoryDrop(
 	ctx context.Context,
 	historyDropLock *sync.Mutex,
 	historyDropResults chan *database.State,
@@ -197,7 +198,7 @@ func (ix *Indexer[B, T]) maybeRunHistoryDrop(
 	// returned via the results channel.
 }
 
-func (ix *Indexer[B, T]) pollHistoryDropResults(
+func (ix *Indexer[B, T, E]) pollHistoryDropResults(
 	ctx context.Context,
 	historyDropLock *sync.Mutex,
 	historyDropResults chan *database.State,
@@ -239,7 +240,7 @@ func (ix *Indexer[B, T]) pollHistoryDropResults(
 	return nil
 }
 
-func (ix *Indexer[B, T]) updateStartBlock(ctx context.Context) error {
+func (ix *Indexer[B, T, E]) updateStartBlock(ctx context.Context) error {
 	if ix.historyDropInterval > 0 {
 		// if the starting block number is set below the interval that gets dropped by history, fix it
 		newStartBlockNumber, err := ix.getMinBlockWithinHistoryInterval(ctx)
@@ -254,9 +255,9 @@ func (ix *Indexer[B, T]) updateStartBlock(ctx context.Context) error {
 	return nil
 }
 
-func (ix *Indexer[B, T]) runIteration(
+func (ix *Indexer[B, T, E]) runIteration(
 	ctx context.Context, state *database.State,
-) (*iterationResult[B, T], error) {
+) (*iterationResult[B, T, E], error) {
 	blkRange, err := ix.getBlockRange(state)
 	if err != nil {
 		return nil, err
@@ -278,7 +279,7 @@ func (ix *Indexer[B, T]) runIteration(
 
 	newState := updateState(blockResults, state)
 
-	return &iterationResult[B, T]{
+	return &iterationResult[B, T, E]{
 		blockResults: blockResults,
 		state:        newState,
 	}, nil
@@ -298,7 +299,7 @@ func (br blockRange) len() uint64 {
 	return br.end - br.start
 }
 
-func (ix *Indexer[B, T]) getBlockRange(state *database.State) (*blockRange, error) {
+func (ix *Indexer[B, T, E]) getBlockRange(state *database.State) (*blockRange, error) {
 	result := new(blockRange)
 	result.start = ix.getStartBlock(state)
 	result.end = ix.getEndBlock(state, result.start)
@@ -306,7 +307,7 @@ func (ix *Indexer[B, T]) getBlockRange(state *database.State) (*blockRange, erro
 	return result, nil
 }
 
-func (ix *Indexer[B, T]) getStartBlock(state *database.State) uint64 {
+func (ix *Indexer[B, T, E]) getStartBlock(state *database.State) uint64 {
 	if state == nil {
 		return ix.startBlockNumber
 	}
@@ -318,7 +319,7 @@ func (ix *Indexer[B, T]) getStartBlock(state *database.State) uint64 {
 	return state.LastIndexedBlockNumber + 1
 }
 
-func (ix *Indexer[B, T]) getEndBlock(state *database.State, start uint64) uint64 {
+func (ix *Indexer[B, T, E]) getEndBlock(state *database.State, start uint64) uint64 {
 	latestConfirmedNum := state.LastChainBlockNumber - ix.confirmations + 1
 	if latestConfirmedNum < start {
 		return start
@@ -332,15 +333,15 @@ func (ix *Indexer[B, T]) getEndBlock(state *database.State, start uint64) uint64
 	return latestConfirmedNum + 1
 }
 
-func (ix *Indexer[B, T]) getBlockResults(
+func (ix *Indexer[B, T, E]) getBlockResults(
 	ctx context.Context, blkRange *blockRange,
-) ([]BlockResult[B, T], error) {
+) ([]BlockResult[B, T, E], error) {
 	sem := make(chan struct{}, ix.maxConcurrency)
 	eg, ctx := errgroup.WithContext(ctx)
 
 	l := blkRange.len()
 
-	results := make([]BlockResult[B, T], l)
+	results := make([]BlockResult[B, T, E], l)
 
 	for i := blkRange.start; i < blkRange.end; i++ {
 		blockNum := i
@@ -365,9 +366,10 @@ func (ix *Indexer[B, T]) getBlockResults(
 	return results, nil
 }
 
-func (ix *Indexer[B, T]) saveData(ctx context.Context, results *iterationResult[B, T]) error {
+func (ix *Indexer[B, T, E]) saveData(ctx context.Context, results *iterationResult[B, T, E]) error {
 	blocks := make([]*B, len(results.blockResults))
 	var transactions []*T
+	var events []*E
 
 	for i := range results.blockResults {
 		blocks[i] = &results.blockResults[i].Block
@@ -376,11 +378,16 @@ func (ix *Indexer[B, T]) saveData(ctx context.Context, results *iterationResult[
 		for j := range resTxs {
 			transactions = append(transactions, &resTxs[j])
 		}
+
+		resEvents := results.blockResults[i].Events
+		for j := range results.blockResults[i].Events {
+			events = append(events, &resEvents[j])
+		}
 	}
 
 	logger.Debugf("fetched %d blocks with %d transactions from the chain", len(results.blockResults), len(transactions))
 
-	err := ix.db.SaveAllEntities(ctx, blocks, transactions, results.state)
+	err := ix.db.SaveAllEntities(ctx, blocks, transactions, events, results.state)
 	if err != nil {
 		return err
 	}
@@ -390,7 +397,7 @@ func (ix *Indexer[B, T]) saveData(ctx context.Context, results *iterationResult[
 	return nil
 }
 
-func (ix *Indexer[B, T]) updateChainState(ctx context.Context, state *database.State) (*database.State, error) {
+func (ix *Indexer[B, T, E]) updateChainState(ctx context.Context, state *database.State) (*database.State, error) {
 	newState := *state
 	newState.LastChainBlockUpdated = uint64(time.Now().Unix())
 
@@ -405,12 +412,12 @@ func (ix *Indexer[B, T]) updateChainState(ctx context.Context, state *database.S
 	return &newState, nil
 }
 
-func (ix *Indexer[B, T]) newBackoff() backoff.BackOff {
+func (ix *Indexer[B, T, E]) newBackoff() backoff.BackOff {
 	return backoff.NewExponentialBackOff(backoff.WithMaxElapsedTime(ix.backoffMaxElapsedTime))
 }
 
-func updateState[B database.Block, T database.Transaction](
-	results []BlockResult[B, T], state *database.State,
+func updateState[B database.Block, T database.Transaction, E database.Event](
+	results []BlockResult[B, T, E], state *database.State,
 ) *database.State {
 	if len(results) == 0 {
 		return state
