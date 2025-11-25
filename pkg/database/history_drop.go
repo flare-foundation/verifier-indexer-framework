@@ -22,8 +22,8 @@ func (db *DB[B, T]) DropHistoryIteration(
 
 	// Delete in specified order to not break foreign keys.
 	deleteOrder := []interface{}{
-		new(B),
 		new(T),
+		new(B),
 	}
 	newState := *state
 
