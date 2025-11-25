@@ -21,53 +21,39 @@ func (db *DB[B, T]) DropHistoryIteration(
 	deleteStart := lastBlockTime - intervalSeconds
 
 	// Delete in specified order to not break foreign keys.
-	deleteOrder := []interface{}{
-		new(T),
-		new(B),
-	}
 	newState := *state
 
-	err := db.g.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		for _, entity := range deleteOrder {
-			if err := deleteInBatches(tx, deleteStart, entity); err != nil {
-				return err
-			}
-		}
-
-		var firstBlock B
-		err := tx.Order("block_number").First(&firstBlock).Error
-		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-			return errors.Wrap(err, "Failed to get first block in the DB")
-		}
-
-		newState.LastHistoryDrop = uint64(time.Now().Unix())
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			newState.FirstIndexedBlockNumber = 0
-			newState.FirstIndexedBlockTimestamp = 0
-			newState.LastIndexedBlockNumber = 0
-			newState.LastIndexedBlockTimestamp = 0
-
-			return nil
-		}
-
-		newState.FirstIndexedBlockNumber = firstBlock.GetBlockNumber()
-		newState.FirstIndexedBlockTimestamp = firstBlock.GetTimestamp()
-
-		if err := tx.Save(newState).Error; err != nil {
-			return errors.Wrap(err, "Failed to update state in the DB")
-		}
-
-		return nil
-	})
+	if err := deleteInBatches[B](db.g, deleteStart); err != nil {
+		return nil, err
+	}
 
 	logger.Infof("deleted blocks up to index %d", newState.FirstIndexedBlockNumber)
+
+	var firstBlock B
+	err := db.g.Order("block_number").First(&firstBlock).Error
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, errors.Wrap(err, "Failed to get first block in the DB")
+	}
+
+	newState.LastHistoryDrop = uint64(time.Now().Unix())
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		newState.FirstIndexedBlockNumber = 0
+		newState.FirstIndexedBlockTimestamp = 0
+
+		return &newState, nil
+	}
+
+	newState.FirstIndexedBlockNumber = firstBlock.GetBlockNumber()
+	newState.FirstIndexedBlockTimestamp = firstBlock.GetTimestamp()
 
 	return &newState, err
 }
 
-func deleteInBatches(db *gorm.DB, deleteStart uint64, entity interface{}) error {
+func deleteInBatches[B Block](db *gorm.DB, deleteStart uint64) error {
+	var entity B
+
 	for {
-		result := db.Limit(deleteBatchSize).Where("timestamp < ?", deleteStart).Delete(&entity)
+		result := db.Limit(deleteBatchSize).Where(entity.TimestampQuery(), deleteStart).Delete(&entity)
 
 		if result.Error != nil {
 			return errors.Wrap(result.Error, "Failed to delete historic data in the DB")

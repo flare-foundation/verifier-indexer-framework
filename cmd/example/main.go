@@ -55,4 +55,8 @@ func (e dbBlock) GetTimestamp() uint64 {
 	return 0
 }
 
+func (e dbBlock) TimestampQuery() string {
+	return "? IS NOT NULL"
+}
+
 type dbTransaction struct{}
