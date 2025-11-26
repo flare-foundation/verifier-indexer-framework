@@ -97,16 +97,32 @@ type dbBlock struct {
 	Timestamp   uint64 `gorm:"index"`
 }
 
-func (e dbBlock) GetBlockNumber() uint64 {
-	return e.BlockNumber
+func (b dbBlock) GetBlockNumber() uint64 {
+	return b.BlockNumber
 }
 
-func (e dbBlock) GetTimestamp() uint64 {
-	return e.Timestamp
+func (b dbBlock) GetTimestamp() uint64 {
+	return b.Timestamp
+}
+
+func (b dbBlock) HistoryDropOrder() []database.Deletable {
+	var emptyBlock dbBlock
+	var emptyTransaction dbTransaction
+	return []database.Deletable{emptyTransaction, emptyBlock}
+}
+
+// Required for Deletable interface
+func (b dbBlock) TimestampQuery() string {
+	return "timestamp < ?"
 }
 
 type dbTransaction struct {
 	Hash        string `gorm:"primaryKey;type:varchar(64)"`
 	BlockNumber uint64 `gorm:"index"`
 	Timestamp   uint64 `gorm:"index"`
+}
+
+// Required for Deletable interface
+func (t dbTransaction) TimestampQuery() string {
+	return "timestamp < ?"
 }
