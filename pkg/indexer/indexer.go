@@ -156,26 +156,31 @@ func (ix *Indexer[B, T]) Run(ctx context.Context) error {
 }
 
 func (ix *Indexer[B, T]) getInitialStartBlockNumber(ctx context.Context, state *database.State) (uint64, error) {
-	if state.LastIndexedBlockNumber > 0 {
-		logger.Infof("resuming after last indexed block from the database: %d", state.LastIndexedBlockNumber)
-		return state.LastIndexedBlockNumber + 1, nil
-	}
-
-	// No blocks are indexed yet.
-	// If history drop is disabled, return the configured start index.
+	// If history drop is disabled: we either start from after the last indexed block, or else we start
+	// from the configured start block number if the DB is empty.
 	if ix.historyDropInterval == 0 {
+		if state.LastIndexedBlockNumber > 0 {
+			logger.Infof("resuming after last indexed block from the database: %d", state.LastIndexedBlockNumber)
+			return state.LastIndexedBlockNumber + 1, nil
+		}
+
 		logger.Infof("no blocks indexed yet, starting from configured start block number: %d", ix.startBlockNumber)
 		return ix.startBlockNumber, nil
 	}
 
 	// History drop is enabled so calculate the start index based on it.
-	blockNumber, err := ix.getMinBlockWithinHistoryInterval(ctx)
+	historyDropStartBlock, err := ix.getMinBlockWithinHistoryInterval(ctx)
 	if err != nil {
 		return 0, errors.Wrap(err, "failed to calculate start block number based on history drop interval")
 	}
 
-	logger.Infof("no blocks indexed yet, starting from block number based on history drop: %d", blockNumber)
-	return blockNumber, nil
+	if state.LastIndexedBlockNumber >= historyDropStartBlock {
+		logger.Infof("resuming after last indexed block from the database: %d", state.LastIndexedBlockNumber)
+		return state.LastIndexedBlockNumber + 1, nil
+	}
+
+	logger.Infof("no blocks indexed yet within history drop interval, starting from block number: %d", historyDropStartBlock)
+	return historyDropStartBlock, nil
 }
 
 func (ix *Indexer[B, T]) maybeRunHistoryDrop(
