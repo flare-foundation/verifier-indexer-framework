@@ -32,8 +32,6 @@ func (db *DB[B, T]) DropHistoryIteration(
 		}
 	}
 
-	logger.Infof("deleted blocks up to index %d", newState.FirstIndexedBlockNumber)
-
 	var firstBlock B
 	err := db.g.Order("block_number").First(&firstBlock).Error
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -50,6 +48,8 @@ func (db *DB[B, T]) DropHistoryIteration(
 
 	newState.FirstIndexedBlockNumber = firstBlock.GetBlockNumber()
 	newState.FirstIndexedBlockTimestamp = firstBlock.GetTimestamp()
+
+	logger.Infof("deleted blocks up to index %d", newState.FirstIndexedBlockNumber)
 
 	return &newState, err
 }
