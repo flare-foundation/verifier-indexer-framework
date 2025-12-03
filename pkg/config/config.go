@@ -1,16 +1,18 @@
 package config
 
 import (
-	"os"
-
 	"github.com/BurntSushi/toml"
+	"github.com/caarlos0/env/v11"
 	"github.com/flare-foundation/go-flare-common/pkg/logger"
 	"github.com/pkg/errors"
 )
 
-var envOverrides = map[string]func(*BaseConfig, string){
-	"DB_USERNAME": func(c *BaseConfig, v string) { c.DB.Username = v },
-	"DB_PASSWORD": func(c *BaseConfig, v string) { c.DB.Password = v },
+type envConfig struct {
+	DBHost     string `env:"DB_HOST"`
+	DBPort     int    `env:"DB_PORT"`
+	DBUsername string `env:"DB_USERNAME"`
+	DBPassword string `env:"DB_PASSWORD"`
+	DBName     string `env:"DB_NAME"`
 }
 
 type BaseConfig struct {
@@ -67,7 +69,7 @@ var defaultIndexer = Indexer{
 	MaxConcurrency: 8,
 }
 
-func ReadFile(filepath string, cfg interface{}) error {
+func ReadFile(filepath string, cfg any) error {
 	_, err := toml.DecodeFile(filepath, cfg)
 	return err
 }
@@ -77,10 +79,30 @@ type EnvOverrideable interface {
 }
 
 func (cfg *BaseConfig) ApplyEnvOverrides() {
-	for env, override := range envOverrides {
-		if val, ok := os.LookupEnv(env); ok {
-			override(cfg, val)
-		}
+	var envCfg envConfig
+	if err := env.Parse(&envCfg); err != nil {
+		logger.Error("failed to parse environment variables for config overrides: %v", err)
+		return
+	}
+
+	if envCfg.DBHost != "" {
+		cfg.DB.Host = envCfg.DBHost
+	}
+
+	if envCfg.DBPort != 0 {
+		cfg.DB.Port = envCfg.DBPort
+	}
+
+	if envCfg.DBUsername != "" {
+		cfg.DB.Username = envCfg.DBUsername
+	}
+
+	if envCfg.DBPassword != "" {
+		cfg.DB.Password = envCfg.DBPassword
+	}
+
+	if envCfg.DBName != "" {
+		cfg.DB.DBName = envCfg.DBName
 	}
 }
 
