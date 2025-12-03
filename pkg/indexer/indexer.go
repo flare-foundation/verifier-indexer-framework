@@ -196,7 +196,6 @@ func (ix *Indexer[B, T]) runIteration(
 
 			upToDateBackoff.Reset()
 
-			logger.Debugf("fetched %d blocks from the chain", len(results.blockResults))
 			err = ix.saveData(ctx, results)
 			if err != nil {
 				return err
