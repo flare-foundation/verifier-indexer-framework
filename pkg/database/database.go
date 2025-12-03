@@ -16,7 +16,6 @@ import (
 )
 
 const (
-	tcp                  = "tcp"
 	transactionBatchSize = 1000
 	globalStateID        = 1
 	globalVersionID      = 1

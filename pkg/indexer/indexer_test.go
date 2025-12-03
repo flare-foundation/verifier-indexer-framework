@@ -128,3 +128,25 @@ func TestIndexer(t *testing.T) {
 	require.Len(t, db.states, 1)
 	require.Equal(t, state, db.states[0])
 }
+
+func TestGetInitialStartBlockNumber(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("returns zero when no previous state exists", func(t *testing.T) {
+		ix := Indexer[dbBlock, dbTransaction]{}
+		var state database.State
+
+		startBlock, err := ix.getInitialStartBlockNumber(ctx, &state)
+		require.NoError(t, err)
+		require.Equal(t, uint64(0), startBlock)
+	})
+
+	t.Run("returns last processed block number plus one when previous state exists", func(t *testing.T) {
+		ix := Indexer[dbBlock, dbTransaction]{}
+		state := database.State{LastIndexedBlockNumber: 42}
+
+		startBlock, err := ix.getInitialStartBlockNumber(ctx, &state)
+		require.NoError(t, err)
+		require.Equal(t, uint64(43), startBlock)
+	})
+}
