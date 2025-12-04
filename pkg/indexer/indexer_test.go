@@ -55,6 +55,10 @@ func (b dbBlock) GetTimestamp() uint64 {
 	return b.Timestamp
 }
 
+func (b dbBlock) HistoryDropOrder() []database.Deletable {
+	return nil
+}
+
 type dbTransaction struct{}
 
 type mockBlockchain struct{}
