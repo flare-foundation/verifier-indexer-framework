@@ -20,6 +20,22 @@ type BlockchainClient[B database.Block, T database.Transaction, E database.Event
 	GetServerInfo(context.Context) (string, error)
 }
 
+type DB[B database.Block, T database.Transaction, E database.Event] interface {
+	SaveAllEntities(
+		ctx context.Context,
+		blocks []*B,
+		transactions []*T,
+		events []*E,
+		state *database.State,
+	) error
+	GetState(ctx context.Context) (*database.State, error)
+	DropHistoryIteration(
+		ctx context.Context,
+		state *database.State,
+		intervalSeconds, lastBlockTime uint64,
+	) (*database.State, error)
+}
+
 type BlockInfo struct {
 	BlockNumber uint64
 	Timestamp   uint64
@@ -37,7 +53,7 @@ type BlockResult[B database.Block, T database.Transaction, E database.Event] str
 }
 
 func New[B database.Block, T database.Transaction, E database.Event](
-	cfg *config.BaseConfig, db *database.DB[B, T, E], blockchain BlockchainClient[B, T, E],
+	cfg *config.BaseConfig, db DB[B, T, E], blockchain BlockchainClient[B, T, E],
 ) Indexer[B, T, E] {
 	backoffMaxElapsedTime := time.Duration(cfg.Timeout.BackoffMaxElapsedTimeSeconds) * time.Second
 	historyDropFrequency := cfg.DB.HistoryDropFrequency
@@ -64,7 +80,7 @@ func New[B database.Block, T database.Transaction, E database.Event](
 type Indexer[B database.Block, T database.Transaction, E database.Event] struct {
 	blockchain            BlockchainClient[B, T, E]
 	confirmations         uint64
-	db                    *database.DB[B, T, E]
+	db                    DB[B, T, E]
 	maxBlockRange         uint64
 	maxConcurrency        int
 	startBlockNumber      uint64
@@ -84,69 +100,124 @@ func (ix *Indexer[B, T, E]) Run(ctx context.Context) error {
 		return err
 	}
 
+	startBlockNumber, err := ix.getInitialStartBlockNumber(ctx, state)
+	if err != nil {
+		return errors.Wrap(err, "failed to get initial start block number")
+	}
+
+	ix.startBlockNumber = startBlockNumber
+
 	for {
-		err := backoff.RetryNotify(
-			func() error {
-				newState, err := ix.updateChainState(ctx, state)
-				if err != nil {
-					return err
-				}
-
-				state = newState
-				return nil
-			},
-			ix.newBackoff(),
-			func(err error, d time.Duration) {
-				logger.Errorf("indexer update chain state error: %v. Will retry after %v", err, d)
-			},
-		)
+		state, err = ix.runIteration(ctx, state, &historyDropLock, historyDropResults, upToDateBackoff)
 		if err != nil {
-			return errors.Wrap(err, "fatal error in indexer")
+			return err
 		}
 
-		if err := ix.pollHistoryDropResults(ctx, &historyDropLock, historyDropResults, state); err != nil {
-			return errors.Wrap(err, "pollHistoryDropResults failed")
-		}
-
-		ix.maybeRunHistoryDrop(ctx, &historyDropLock, historyDropResults, state)
-
-		err = backoff.RetryNotify(
-			func() error {
-				results, err := ix.runIteration(ctx, state)
-				if err != nil {
-					return err
-				}
-
-				if results == nil {
-					time.Sleep(upToDateBackoff.NextBackOff())
-					return nil
-				}
-
-				upToDateBackoff.Reset()
-
-				err = ix.saveData(ctx, results)
-				if err != nil {
-					return err
-				}
-
-				logger.Infof("successfully processed up to block %d", results.state.LastIndexedBlockNumber)
-				state = results.state
-
-				return nil
-			},
-			ix.newBackoff(),
-			func(err error, d time.Duration) {
-				logger.Errorf("indexer iteration error: %v. Will retry after %v", err, d)
-			},
-		)
-		if err != nil {
-			return errors.Wrap(err, "fatal error in indexer")
-		}
-
+		// If an ending block number was configured, stop indexing when reached.
 		if ix.endBlockNumber != 0 && ix.endBlockNumber <= state.LastIndexedBlockNumber {
 			return nil
 		}
 	}
+}
+
+func (ix *Indexer[B, T, E]) getInitialStartBlockNumber(ctx context.Context, state *database.State) (uint64, error) {
+	// If history drop is disabled: we either start from after the last indexed block, or else we start
+	// from the configured start block number if the DB is empty.
+	if ix.historyDropInterval == 0 {
+		if state.LastIndexedBlockNumber > 0 {
+			logger.Infof("resuming after last indexed block from the database: %d", state.LastIndexedBlockNumber)
+			return state.LastIndexedBlockNumber + 1, nil
+		}
+
+		logger.Infof("no blocks indexed yet, starting from configured start block number: %d", ix.startBlockNumber)
+		return ix.startBlockNumber, nil
+	}
+
+	// History drop is enabled so calculate the start index based on it.
+	historyDropStartBlock, err := ix.getMinBlockWithinHistoryInterval(ctx)
+	if err != nil {
+		return 0, errors.Wrap(err, "failed to calculate start block number based on history drop interval")
+	}
+
+	if state.LastIndexedBlockNumber >= historyDropStartBlock {
+		logger.Infof("resuming after last indexed block from the database: %d", state.LastIndexedBlockNumber)
+		return state.LastIndexedBlockNumber + 1, nil
+	}
+
+	logger.Infof("no blocks indexed yet within history drop interval, starting from block number: %d", historyDropStartBlock)
+	return historyDropStartBlock, nil
+}
+
+func (ix *Indexer[B, T, E]) runIteration(
+	ctx context.Context,
+	state *database.State,
+	historyDropLock *sync.Mutex,
+	historyDropResults chan *database.State,
+	upToDateBackoff *backoff.ExponentialBackOff,
+) (*database.State, error) {
+	logger.Debug("starting indexer iteration")
+
+	err := backoff.RetryNotify(
+		func() error {
+			newState, err := ix.updateChainState(ctx, state)
+			if err != nil {
+				return err
+			}
+
+			logger.Debugf("updated chain state: %+v", newState)
+			state = newState
+			return nil
+		},
+		ix.newBackoff(),
+		func(err error, d time.Duration) {
+			logger.Errorf("indexer update chain state error: %v. Will retry after %v", err, d)
+		},
+	)
+	if err != nil {
+		return nil, errors.Wrap(err, "fatal error in indexer")
+	}
+
+	if err := ix.pollHistoryDropResults(historyDropLock, historyDropResults, state); err != nil {
+		return nil, errors.Wrap(err, "pollHistoryDropResults failed")
+	}
+
+	ix.maybeRunHistoryDrop(ctx, historyDropLock, historyDropResults, state)
+
+	err = backoff.RetryNotify(
+		func() error {
+			results, err := ix.getIterationResults(ctx, state)
+			if err != nil {
+				return err
+			}
+
+			if results == nil {
+				logger.Debug("no new blocks to index, indexer is up to date")
+				time.Sleep(upToDateBackoff.NextBackOff())
+				return nil
+			}
+
+			upToDateBackoff.Reset()
+
+			err = ix.saveData(ctx, results)
+			if err != nil {
+				return err
+			}
+
+			logger.Infof("successfully processed up to block %d", results.state.LastIndexedBlockNumber)
+			state = results.state
+
+			return nil
+		},
+		ix.newBackoff(),
+		func(err error, d time.Duration) {
+			logger.Errorf("indexer iteration error: %v. Will retry after %v", err, d)
+		},
+	)
+	if err != nil {
+		return nil, errors.Wrap(err, "fatal error in indexer")
+	}
+
+	return state, nil
 }
 
 func (ix *Indexer[B, T, E]) maybeRunHistoryDrop(
@@ -199,7 +270,6 @@ func (ix *Indexer[B, T, E]) maybeRunHistoryDrop(
 }
 
 func (ix *Indexer[B, T, E]) pollHistoryDropResults(
-	ctx context.Context,
 	historyDropLock *sync.Mutex,
 	historyDropResults chan *database.State,
 	state *database.State,
@@ -223,16 +293,6 @@ func (ix *Indexer[B, T, E]) pollHistoryDropResults(
 			state.FirstIndexedBlockTimestamp = newState.FirstIndexedBlockTimestamp
 		}
 
-		// in case the history drop dropped all the blocks
-		if newState.LastIndexedBlockNumber == 0 {
-			state.LastIndexedBlockNumber = 0
-			state.LastIndexedBlockTimestamp = 0
-
-			if err := ix.updateStartBlock(ctx); err != nil {
-				return err
-			}
-		}
-
 	// default case to avoid blocking if results not available
 	default:
 	}
@@ -240,22 +300,7 @@ func (ix *Indexer[B, T, E]) pollHistoryDropResults(
 	return nil
 }
 
-func (ix *Indexer[B, T, E]) updateStartBlock(ctx context.Context) error {
-	if ix.historyDropInterval > 0 {
-		// if the starting block number is set below the interval that gets dropped by history, fix it
-		newStartBlockNumber, err := ix.getMinBlockWithinHistoryInterval(ctx)
-		if err != nil {
-			return err
-		}
-
-		ix.startBlockNumber = newStartBlockNumber
-		logger.Infof("new starting block number set to %d due to history drop", ix.startBlockNumber)
-	}
-
-	return nil
-}
-
-func (ix *Indexer[B, T, E]) runIteration(
+func (ix *Indexer[B, T, E]) getIterationResults(
 	ctx context.Context, state *database.State,
 ) (*iterationResult[B, T, E], error) {
 	blkRange, err := ix.getBlockRange(state)
@@ -263,14 +308,22 @@ func (ix *Indexer[B, T, E]) runIteration(
 		return nil, err
 	}
 
-	if blkRange.len() == 0 {
+	switch blkRange.len() {
+	case 0:
 		return nil, nil
-	}
 
-	logger.Debugf(
-		"indexing from block %d to %d, latest block on chain %d",
-		blkRange.start, blkRange.end-1, state.LastChainBlockNumber,
-	)
+	case 1:
+		logger.Debugf(
+			"indexing block %d, latest block on chain %d",
+			blkRange.start, state.LastChainBlockNumber,
+		)
+
+	default:
+		logger.Debugf(
+			"indexing from block %d to %d, latest block on chain %d",
+			blkRange.start, blkRange.end-1, state.LastChainBlockNumber,
+		)
+	}
 
 	blockResults, err := ix.getBlockResults(ctx, blkRange)
 	if err != nil {
@@ -308,10 +361,6 @@ func (ix *Indexer[B, T, E]) getBlockRange(state *database.State) (*blockRange, e
 }
 
 func (ix *Indexer[B, T, E]) getStartBlock(state *database.State) uint64 {
-	if state == nil {
-		return ix.startBlockNumber
-	}
-
 	if state.LastIndexedBlockNumber < ix.startBlockNumber {
 		return ix.startBlockNumber
 	}
@@ -320,7 +369,8 @@ func (ix *Indexer[B, T, E]) getStartBlock(state *database.State) uint64 {
 }
 
 func (ix *Indexer[B, T, E]) getEndBlock(state *database.State, start uint64) uint64 {
-	latestConfirmedNum := state.LastChainBlockNumber - ix.confirmations + 1
+	latestConfirmedNum := state.LastChainBlockNumber - ix.confirmations
+
 	if latestConfirmedNum < start {
 		return start
 	}

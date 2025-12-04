@@ -1,5 +1,4 @@
 //go:build integration
-// +build integration
 
 package framework
 
@@ -14,6 +13,7 @@ import (
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/config"
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/database"
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/indexer"
+	"github.com/joho/godotenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -21,6 +21,11 @@ import (
 const defaultConfigFile = "../../tests/test_config.toml"
 
 func TestRun(t *testing.T) {
+	err := godotenv.Load()
+	if err != nil {
+		t.Log("No .env file found, proceeding without it")
+	}
+
 	configFile := os.Getenv("CONFIG_FILE")
 	if configFile == "" {
 		configFile = defaultConfigFile
@@ -31,14 +36,18 @@ func TestRun(t *testing.T) {
 	}
 
 	args := CLIArgs{ConfigFile: configFile}
-	err := runWithArgs(input, args)
+	err = runWithArgs(input, args)
 	require.NoError(t, err)
 
 	cfg := config.BaseConfig{}
 	err = config.ReadFile(configFile, &cfg)
 	require.NoError(t, err)
 
-	db, err := database.Connect(&config.DB{Host: cfg.DB.Host, Port: cfg.DB.Port, Username: cfg.DB.Username, Password: cfg.DB.Password, DBName: cfg.DB.DBName})
+	cfg.ApplyEnvOverrides()
+
+	t.Log("Applied env overrides to config: ", cfg)
+
+	db, err := database.Connect(&cfg.DB)
 	require.NoError(t, err)
 
 	state := new(database.State)
