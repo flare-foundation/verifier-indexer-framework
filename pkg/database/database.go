@@ -21,12 +21,13 @@ const (
 	globalVersionID      = 1
 )
 
-type ExternalEntities[B Block, T Transaction] struct {
+type ExternalEntities[B Block, T Transaction, E Event] struct {
 	Block       *B
 	Transaction *T
+	Event       *E
 }
 
-type DB[B Block, T Transaction] struct {
+type DB[B Block, T Transaction, E Event] struct {
 	g *gorm.DB
 }
 
@@ -42,7 +43,7 @@ func InitVersion() *Version {
 	}
 }
 
-func New[B Block, T Transaction](cfg *config.DB, entities ExternalEntities[B, T]) (*DB[B, T], error) {
+func New[B Block, T Transaction, E Event](cfg *config.DB, entities ExternalEntities[B, T, E]) (*DB[B, T, E], error) {
 	db, err := Connect(cfg)
 	if err != nil {
 		return nil, err
@@ -53,19 +54,33 @@ func New[B Block, T Transaction](cfg *config.DB, entities ExternalEntities[B, T]
 	if cfg.DropTableAtStart {
 		logger.Info("DB tables dropped at start")
 
-		err = db.Migrator().DropTable(State{}, entities.Block, entities.Transaction)
+		if isEmptyStruct[E]() {
+			err = db.Migrator().DropTable(State{}, entities.Block, entities.Transaction)
+		} else {
+			err = db.Migrator().DropTable(State{}, entities.Block, entities.Transaction, entities.Event)
+		}
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	if err := db.AutoMigrate(State{}, Version{}, entities.Block, entities.Transaction); err != nil {
+	if isEmptyStruct[E]() {
+		err = db.AutoMigrate(State{}, Version{}, entities.Block, entities.Transaction)
+	} else {
+		err = db.AutoMigrate(State{}, Version{}, entities.Block, entities.Transaction, entities.Event)
+	}
+	if err != nil {
 		return nil, err
 	}
 
 	logger.Debug("migrated DB entities")
 
-	return &DB[B, T]{g: db}, err
+	return &DB[B, T, E]{g: db}, err
+}
+
+func isEmptyStruct[T any]() bool {
+	_, ok := any(*new(T)).(struct{})
+	return ok
 }
 
 func Connect(cfg *config.DB) (*gorm.DB, error) {
@@ -99,7 +114,7 @@ func formatDSN(cfg *config.DB) string {
 	return u.String()
 }
 
-func (db *DB[B, T]) GetState(ctx context.Context) (*State, error) {
+func (db *DB[B, T, E]) GetState(ctx context.Context) (*State, error) {
 	state := new(State)
 
 	if err := db.g.WithContext(ctx).First(state, globalStateID).Error; err != nil {
@@ -113,8 +128,8 @@ func (db *DB[B, T]) GetState(ctx context.Context) (*State, error) {
 	return state, nil
 }
 
-func (db *DB[B, T]) SaveAllEntities(
-	ctx context.Context, blocks []*B, transactions []*T, state *State,
+func (db *DB[B, T, E]) SaveAllEntities(
+	ctx context.Context, blocks []*B, transactions []*T, events []*E, state *State,
 ) error {
 	return db.g.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if len(blocks) != 0 {
@@ -135,6 +150,15 @@ func (db *DB[B, T]) SaveAllEntities(
 			}
 		}
 
+		if !isEmptyStruct[E]() && len(events) != 0 {
+			err := tx.Clauses(clause.OnConflict{DoNothing: true}).
+				Create(events).
+				Error
+			if err != nil {
+				return err
+			}
+		}
+
 		if state != nil {
 			err := tx.Save(state).Error
 			if err != nil {
@@ -146,7 +170,7 @@ func (db *DB[B, T]) SaveAllEntities(
 	})
 }
 
-func (db *DB[B, T]) SaveVersion(
+func (db *DB[B, T, E]) SaveVersion(
 	ctx context.Context, version *Version,
 ) error {
 	return db.g.WithContext(ctx).Save(version).Error

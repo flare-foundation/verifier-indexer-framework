@@ -13,7 +13,7 @@ import (
 // timeouts.
 const deleteBatchSize = 1000
 
-func (db *DB[B, T]) DropHistoryIteration(
+func (db *DB[B, T, E]) DropHistoryIteration(
 	ctx context.Context,
 	state *State,
 	intervalSeconds, lastBlockTime uint64,

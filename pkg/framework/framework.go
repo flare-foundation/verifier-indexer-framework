@@ -14,19 +14,19 @@ type CLIArgs struct {
 	ConfigFile string `arg:"--config,env:CONFIG_FILE" default:"config.toml"`
 }
 
-type Input[B database.Block, C config.EnvOverrideable, T database.Transaction] struct {
+type Input[B database.Block, C config.EnvOverrideable, T database.Transaction, E database.Event] struct {
 	DefaultConfig       C
-	NewBlockchainClient func(C) (indexer.BlockchainClient[B, T], error)
+	NewBlockchainClient func(C) (indexer.BlockchainClient[B, T, E], error)
 }
 
-func Run[B database.Block, C config.EnvOverrideable, T database.Transaction](input Input[B, C, T]) error {
+func Run[B database.Block, C config.EnvOverrideable, T database.Transaction, E database.Event](input Input[B, C, T, E]) error {
 	var args CLIArgs
 	arg.MustParse(&args)
 
 	return runWithArgs(input, args)
 }
 
-func runWithArgs[B database.Block, C config.EnvOverrideable, T database.Transaction](input Input[B, C, T], args CLIArgs) error {
+func runWithArgs[B database.Block, C config.EnvOverrideable, T database.Transaction, E database.Event](input Input[B, C, T, E], args CLIArgs) error {
 	type Config struct {
 		config.BaseConfig
 		Blockchain C
@@ -49,9 +49,10 @@ func runWithArgs[B database.Block, C config.EnvOverrideable, T database.Transact
 
 	logger.Set(cfg.Logger)
 
-	db, err := database.New(&cfg.DB, database.ExternalEntities[B, T]{
+	db, err := database.New(&cfg.DB, database.ExternalEntities[B, T, E]{
 		Block:       new(B),
 		Transaction: new(T),
+		Event:       new(E),
 	})
 	if err != nil {
 		return err
@@ -74,8 +75,8 @@ func runWithArgs[B database.Block, C config.EnvOverrideable, T database.Transact
 	return indexer.Run(ctx)
 }
 
-func saveVersion[B database.Block, T database.Transaction](
-	ctx context.Context, db *database.DB[B, T], blockchain indexer.BlockchainClient[B, T], cfg *config.BaseConfig,
+func saveVersion[B database.Block, T database.Transaction, E database.Event](
+	ctx context.Context, db *database.DB[B, T, E], blockchain indexer.BlockchainClient[B, T, E], cfg *config.BaseConfig,
 ) error {
 	version := database.InitVersion()
 	version.NumConfirmations = cfg.Indexer.Confirmations

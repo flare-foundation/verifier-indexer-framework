@@ -11,7 +11,7 @@ import (
 )
 
 func main() {
-	input := framework.Input[dbBlock, *ExampleConfig, dbTransaction]{
+	input := framework.Input[dbBlock, *ExampleConfig, dbTransaction, struct{}]{
 		NewBlockchainClient: NewExample,
 	}
 
@@ -22,7 +22,7 @@ func main() {
 
 type ExampleBlockchain struct{}
 
-func NewExample(cfg *ExampleConfig) (indexer.BlockchainClient[dbBlock, dbTransaction], error) {
+func NewExample(cfg *ExampleConfig) (indexer.BlockchainClient[dbBlock, dbTransaction, struct{}], error) {
 	return ExampleBlockchain{}, nil
 }
 
@@ -30,7 +30,7 @@ func (e ExampleBlockchain) GetLatestBlockInfo(context.Context) (*indexer.BlockIn
 	return nil, errors.New("not implemented")
 }
 
-func (e ExampleBlockchain) GetBlockResult(context.Context, uint64) (*indexer.BlockResult[dbBlock, dbTransaction], error) {
+func (e ExampleBlockchain) GetBlockResult(context.Context, uint64) (*indexer.BlockResult[dbBlock, dbTransaction, struct{}], error) {
 	return nil, errors.New("not implemented")
 }
 
