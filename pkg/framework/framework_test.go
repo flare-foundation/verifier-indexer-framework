@@ -122,8 +122,8 @@ func (b dbBlock) HistoryDropOrder() []database.Deletable {
 }
 
 // Required for Deletable interface
-func (b dbBlock) TimestampQuery() string {
-	return "timestamp < ?"
+func (b dbBlock) TimestampField() string {
+	return "timestamp"
 }
 
 type dbTransaction struct {
@@ -133,6 +133,6 @@ type dbTransaction struct {
 }
 
 // Required for Deletable interface
-func (t dbTransaction) TimestampQuery() string {
-	return "timestamp < ?"
+func (t dbTransaction) TimestampField() string {
+	return "timestamp"
 }
