@@ -283,7 +283,7 @@ func (ix *Indexer[B, T]) pollHistoryDropResults(
 			return errors.New("history drop failed")
 		}
 
-		logger.Infof("history drop completed, new state: %+v", newState)
+		logger.Debugf("history drop completed, new state: %+v", newState)
 		state.LastHistoryDrop = newState.LastHistoryDrop
 
 		if newState.FirstIndexedBlockNumber > state.FirstIndexedBlockNumber {

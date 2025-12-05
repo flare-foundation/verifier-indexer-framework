@@ -26,8 +26,7 @@ type Version struct {
 type Block interface {
 	GetTimestamp() uint64
 	GetBlockNumber() uint64
+	HistoryDropOrder() []Deletable
 }
 
-// TODO empty interface ??
-type Transaction interface {
-}
+type Transaction any
