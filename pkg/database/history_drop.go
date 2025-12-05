@@ -19,13 +19,12 @@ func (db *DB[B, T]) DropHistoryIteration(
 	intervalSeconds, lastBlockTime uint64,
 ) (*State, error) {
 	deleteStart := lastBlockTime - intervalSeconds
-
-	// Delete in specified order to not break foreign keys.
 	newState := *state
 
 	var b B
 	deleteOrder := b.HistoryDropOrder()
 
+	// Delete in the order specified by HistoryDropOrder to avoid foreign key constraint violations.
 	for _, entity := range deleteOrder {
 		if err := deleteInBatches(db.g, deleteStart, entity); err != nil {
 			return nil, err
@@ -55,12 +54,12 @@ func (db *DB[B, T]) DropHistoryIteration(
 }
 
 type Deletable interface {
-	TimestampQuery() string
+	TimestampField() string
 }
 
 func deleteInBatches(db *gorm.DB, deleteStart uint64, entity Deletable) error {
 	for {
-		result := db.Limit(deleteBatchSize).Where(entity.TimestampQuery(), deleteStart).Delete(entity)
+		result := db.Limit(deleteBatchSize).Where("? < ?", entity.TimestampField(), deleteStart).Delete(entity)
 
 		if result.Error != nil {
 			return errors.Wrap(result.Error, "Failed to delete historic data in the DB")
