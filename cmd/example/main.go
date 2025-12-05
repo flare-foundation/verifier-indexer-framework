@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/flare-foundation/go-flare-common/pkg/logger"
+	"github.com/flare-foundation/verifier-indexer-framework/pkg/database"
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/framework"
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/indexer"
 )
@@ -53,6 +54,16 @@ func (e dbBlock) GetBlockNumber() uint64 {
 }
 func (e dbBlock) GetTimestamp() uint64 {
 	return 0
+}
+
+func (b dbBlock) HistoryDropOrder() []database.Deletable {
+	var emptyBlock dbBlock
+	return []database.Deletable{emptyBlock}
+}
+
+// Required for Deletable interface
+func (e dbBlock) TimestampField() string {
+	return "timestamp"
 }
 
 type dbTransaction struct{}
