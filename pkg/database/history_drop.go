@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/flare-foundation/go-flare-common/pkg/logger"
@@ -59,7 +60,9 @@ type Deletable interface {
 
 func deleteInBatches(db *gorm.DB, deleteStart uint64, entity Deletable) error {
 	for {
-		result := db.Limit(deleteBatchSize).Where("? < ?", entity.TimestampField(), deleteStart).Delete(entity)
+		result := db.Limit(deleteBatchSize).Where(
+			fmt.Sprintf("%s < ?", entity.TimestampField()), deleteStart).
+			Delete(entity)
 
 		if result.Error != nil {
 			return errors.Wrap(result.Error, "Failed to delete historic data in the DB")
