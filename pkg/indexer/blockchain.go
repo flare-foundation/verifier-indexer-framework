@@ -10,23 +10,23 @@ import (
 	"github.com/pkg/errors"
 )
 
-type blockchainWithBackoff[B database.Block, T database.Transaction] struct {
-	client         BlockchainClient[B, T]
+type blockchainWithBackoff[B database.Block, T database.Transaction, E database.Event] struct {
+	client         BlockchainClient[B, T, E]
 	maxElapsedTime time.Duration
 	requestTimeout time.Duration
 }
 
-func newBlockchainWithBackoff[B database.Block, T database.Transaction](
-	client BlockchainClient[B, T], maxElapsedTime, requestTimeout time.Duration,
-) *blockchainWithBackoff[B, T] {
-	return &blockchainWithBackoff[B, T]{
+func newBlockchainWithBackoff[B database.Block, T database.Transaction, E database.Event](
+	client BlockchainClient[B, T, E], maxElapsedTime, requestTimeout time.Duration,
+) *blockchainWithBackoff[B, T, E] {
+	return &blockchainWithBackoff[B, T, E]{
 		client:         client,
 		maxElapsedTime: maxElapsedTime,
 		requestTimeout: requestTimeout,
 	}
 }
 
-func (bwb *blockchainWithBackoff[B, T]) GetLatestBlockInfo(ctx context.Context) (*BlockInfo, error) {
+func (bwb *blockchainWithBackoff[B, T, E]) GetLatestBlockInfo(ctx context.Context) (*BlockInfo, error) {
 	var blockInfo *BlockInfo
 	err := backoff.RetryNotify(
 		func() (err error) {
@@ -48,8 +48,8 @@ func (bwb *blockchainWithBackoff[B, T]) GetLatestBlockInfo(ctx context.Context) 
 	return blockInfo, nil
 }
 
-func (bwb *blockchainWithBackoff[B, T]) GetBlockResult(ctx context.Context, blockNumber uint64) (*BlockResult[B, T], error) {
-	var blockResult *BlockResult[B, T]
+func (bwb *blockchainWithBackoff[B, T, E]) GetBlockResult(ctx context.Context, blockNumber uint64) (*BlockResult[B, T, E], error) {
+	var blockResult *BlockResult[B, T, E]
 
 	err := backoff.RetryNotify(
 		func() (err error) {
@@ -71,7 +71,7 @@ func (bwb *blockchainWithBackoff[B, T]) GetBlockResult(ctx context.Context, bloc
 	return blockResult, nil
 }
 
-func (bwb *blockchainWithBackoff[B, T]) GetBlockTimestamp(ctx context.Context, blockNumber uint64) (uint64, error) {
+func (bwb *blockchainWithBackoff[B, T, E]) GetBlockTimestamp(ctx context.Context, blockNumber uint64) (uint64, error) {
 	var timestamp uint64
 
 	err := backoff.RetryNotify(
@@ -94,7 +94,7 @@ func (bwb *blockchainWithBackoff[B, T]) GetBlockTimestamp(ctx context.Context, b
 	return timestamp, nil
 }
 
-func (bwb *blockchainWithBackoff[B, T]) GetServerInfo(ctx context.Context) (string, error) {
+func (bwb *blockchainWithBackoff[B, T, E]) GetServerInfo(ctx context.Context) (string, error) {
 	var serverInfo string
 	err := backoff.RetryNotify(
 		func() (err error) {
@@ -116,7 +116,7 @@ func (bwb *blockchainWithBackoff[B, T]) GetServerInfo(ctx context.Context) (stri
 	return serverInfo, nil
 }
 
-func (bwb *blockchainWithBackoff[B, T]) newBackoff(ctx context.Context) backoff.BackOff {
+func (bwb *blockchainWithBackoff[B, T, E]) newBackoff(ctx context.Context) backoff.BackOff {
 	return backoff.WithContext(backoff.NewExponentialBackOff(
 		backoff.WithMaxElapsedTime(bwb.maxElapsedTime),
 	), ctx)

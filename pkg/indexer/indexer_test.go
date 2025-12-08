@@ -22,6 +22,7 @@ func (m *mockDB) SaveAllEntities(
 	ctx context.Context,
 	blocks []*dbBlock,
 	transactions []*dbTransaction,
+	events []*struct{},
 	state *database.State,
 ) error {
 	m.blocks = append(m.blocks, blocks)
@@ -70,12 +71,12 @@ func (m mockBlockchain) GetLatestBlockInfo(context.Context) (*BlockInfo, error) 
 	}, nil
 }
 
-func (m mockBlockchain) GetBlockResult(ctx context.Context, blockNumber uint64) (*BlockResult[dbBlock, dbTransaction], error) {
+func (m mockBlockchain) GetBlockResult(ctx context.Context, blockNumber uint64) (*BlockResult[dbBlock, dbTransaction, struct{}], error) {
 	if blockNumber != 101 {
 		return nil, errors.New("block not found")
 	}
 
-	return &BlockResult[dbBlock, dbTransaction]{
+	return &BlockResult[dbBlock, dbTransaction, struct{}]{
 		Block:        dbBlock{BlockNumber: 101, Timestamp: 101000},
 		Transactions: []dbTransaction{{}, {}, {}},
 	}, nil
@@ -137,7 +138,7 @@ func TestGetInitialStartBlockNumber(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("returns zero when no previous state exists", func(t *testing.T) {
-		ix := Indexer[dbBlock, dbTransaction]{}
+		ix := Indexer[dbBlock, dbTransaction, struct{}]{}
 		var state database.State
 
 		startBlock, err := ix.getInitialStartBlockNumber(ctx, &state)
@@ -146,7 +147,7 @@ func TestGetInitialStartBlockNumber(t *testing.T) {
 	})
 
 	t.Run("returns last processed block number plus one when previous state exists", func(t *testing.T) {
-		ix := Indexer[dbBlock, dbTransaction]{}
+		ix := Indexer[dbBlock, dbTransaction, struct{}]{}
 		state := database.State{LastIndexedBlockNumber: 42}
 
 		startBlock, err := ix.getInitialStartBlockNumber(ctx, &state)

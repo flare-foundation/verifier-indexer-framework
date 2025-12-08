@@ -31,7 +31,7 @@ func TestRun(t *testing.T) {
 		configFile = defaultConfigFile
 	}
 
-	input := Input[dbBlock, *ExampleConfig, dbTransaction]{
+	input := Input[dbBlock, *ExampleConfig, dbTransaction, struct{}]{
 		NewBlockchainClient: NewTestBlockchain,
 	}
 
@@ -64,7 +64,7 @@ type TestBlockchain struct {
 	startTime time.Time
 }
 
-func NewTestBlockchain(cfg *ExampleConfig) (indexer.BlockchainClient[dbBlock, dbTransaction], error) {
+func NewTestBlockchain(cfg *ExampleConfig) (indexer.BlockchainClient[dbBlock, dbTransaction, struct{}], error) {
 	return TestBlockchain{startTime: time.Now()}, nil
 }
 
@@ -74,7 +74,7 @@ func (e TestBlockchain) GetLatestBlockInfo(context.Context) (*indexer.BlockInfo,
 	return &indexer.BlockInfo{BlockNumber: timeSince + 500, Timestamp: timeSince + 1000}, nil
 }
 
-func (e TestBlockchain) GetBlockResult(ctx context.Context, blockNum uint64) (*indexer.BlockResult[dbBlock, dbTransaction], error) {
+func (e TestBlockchain) GetBlockResult(ctx context.Context, blockNum uint64) (*indexer.BlockResult[dbBlock, dbTransaction, struct{}], error) {
 	hash := strconv.Itoa(int(blockNum))
 	hash = strings.Repeat("0", 64-len(hash)) + hash
 	block := dbBlock{
@@ -85,7 +85,7 @@ func (e TestBlockchain) GetBlockResult(ctx context.Context, blockNum uint64) (*i
 
 	transactions := []dbTransaction{{Hash: strings.Repeat("f", 64), Timestamp: blockNum + 500, BlockNumber: blockNum}, {Hash: strings.Repeat("e", 64), Timestamp: blockNum + 500, BlockNumber: blockNum}}
 
-	return &indexer.BlockResult[dbBlock, dbTransaction]{Block: block, Transactions: transactions}, nil
+	return &indexer.BlockResult[dbBlock, dbTransaction, struct{}]{Block: block, Transactions: transactions}, nil
 }
 
 func (e TestBlockchain) GetBlockTimestamp(ctx context.Context, blockNum uint64) (uint64, error) {

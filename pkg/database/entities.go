@@ -30,3 +30,5 @@ type Block interface {
 }
 
 type Transaction any
+
+type Event any
