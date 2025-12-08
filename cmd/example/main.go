@@ -44,7 +44,7 @@ func (e ExampleBlockchain) GetServerInfo(context.Context) (string, error) {
 
 type ExampleConfig struct{}
 
-// No-op - required for interface
+// No-op - required for interface.
 func (c *ExampleConfig) ApplyEnvOverrides() {}
 
 type dbBlock struct{}
@@ -61,7 +61,7 @@ func (b dbBlock) HistoryDropOrder() []database.Deletable {
 	return []database.Deletable{emptyBlock}
 }
 
-// Required for Deletable interface
+// TimestampField is required for Deletable interface.
 func (e dbBlock) TimestampField() string {
 	return "timestamp"
 }
