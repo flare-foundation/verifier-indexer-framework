@@ -2,6 +2,8 @@ package indexer
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -9,7 +11,6 @@ import (
 	"github.com/flare-foundation/go-flare-common/pkg/logger"
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/config"
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/database"
-	"github.com/pkg/errors"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -103,7 +104,7 @@ func (ix *Indexer[B, T, E]) Run(ctx context.Context) error {
 
 	startBlockNumber, err := ix.getInitialStartBlockNumber(ctx, state)
 	if err != nil {
-		return errors.Wrap(err, "failed to get initial start block number")
+		return fmt.Errorf("failed to get initial start block number: %w", err)
 	}
 
 	ix.computedStartBlock = startBlockNumber
@@ -144,7 +145,7 @@ func (ix *Indexer[B, T, E]) getInitialStartBlockNumber(ctx context.Context, stat
 	// History drop is enabled so calculate the start index based on it.
 	historyDropStartBlock, err := ix.getMinBlockWithinHistoryInterval(ctx)
 	if err != nil {
-		return 0, errors.Wrap(err, "failed to calculate start block number based on history drop interval")
+		return 0, fmt.Errorf("failed to calculate start block number based on history drop interval: %w", err)
 	}
 
 	if state.LastIndexedBlockNumber >= historyDropStartBlock {
@@ -182,11 +183,11 @@ func (ix *Indexer[B, T, E]) runIteration(
 		},
 	)
 	if err != nil {
-		return nil, errors.Wrap(err, "fatal error in indexer")
+		return nil, fmt.Errorf("fatal error in indexer: %w", err)
 	}
 
 	if err := ix.pollHistoryDropResults(historyDropLock, historyDropResults, state); err != nil {
-		return nil, errors.Wrap(err, "pollHistoryDropResults failed")
+		return nil, fmt.Errorf("pollHistoryDropResults failed: %w", err)
 	}
 
 	ix.maybeRunHistoryDrop(ctx, historyDropLock, historyDropResults, state)
@@ -226,7 +227,7 @@ func (ix *Indexer[B, T, E]) runIteration(
 		},
 	)
 	if err != nil {
-		return nil, errors.Wrap(err, "fatal error in indexer")
+		return nil, fmt.Errorf("fatal error in indexer: %w", err)
 	}
 
 	return state, nil

@@ -2,10 +2,10 @@ package indexer
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/flare-foundation/go-flare-common/pkg/logger"
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/database"
-	"github.com/pkg/errors"
 )
 
 func (ix *Indexer[B, T, E]) shouldRunHistoryDrop(state *database.State) bool {
@@ -74,7 +74,7 @@ func (ix *Indexer[B, T, E]) binarySearchBlockByTime(
 
 		blockTime, err := ix.blockchain.GetBlockTimestamp(ctx, mid)
 		if err != nil {
-			return 0, errors.Wrap(err, "failed to get block timestamp during binary search")
+			return 0, fmt.Errorf("failed to get block timestamp during binary search: %w", err)
 		}
 
 		if latestTimestamp-blockTime <= interval {

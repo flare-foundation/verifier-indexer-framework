@@ -1,10 +1,11 @@
 package config
 
 import (
+	"errors"
+
 	"github.com/BurntSushi/toml"
 	"github.com/caarlos0/env/v11"
 	"github.com/flare-foundation/go-flare-common/pkg/logger"
-	"github.com/pkg/errors"
 )
 
 type envConfig struct {

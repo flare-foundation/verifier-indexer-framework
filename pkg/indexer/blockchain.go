@@ -2,12 +2,12 @@ package indexer
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/flare-foundation/go-flare-common/pkg/logger"
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/database"
-	"github.com/pkg/errors"
 )
 
 type blockchainWithBackoff[B database.Block, T database.Transaction, E database.Event] struct {
@@ -48,7 +48,7 @@ func retryWithBackoff[B database.Block, T database.Transaction, E database.Event
 	)
 	if err != nil {
 		var zero R
-		return zero, errors.Wrap(err, opName+" failed")
+		return zero, fmt.Errorf("%s failed: %w", opName, err)
 	}
 
 	return result, nil

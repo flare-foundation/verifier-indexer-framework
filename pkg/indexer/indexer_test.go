@@ -2,13 +2,13 @@ package indexer
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/config"
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/database"
-	"github.com/pkg/errors"
 	"github.com/stretchr/testify/require"
 )
 

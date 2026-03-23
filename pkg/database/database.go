@@ -2,13 +2,13 @@ package database
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"time"
 
 	"github.com/flare-foundation/go-flare-common/pkg/logger"
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/config"
-	"github.com/pkg/errors"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -100,7 +100,7 @@ func Connect(cfg *config.DB) (*gorm.DB, error) {
 
 	sqlDB, err := db.DB()
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to get underlying sql.DB")
+		return nil, fmt.Errorf("failed to get underlying sql.DB: %w", err)
 	}
 
 	if cfg.MaxOpenConns > 0 {

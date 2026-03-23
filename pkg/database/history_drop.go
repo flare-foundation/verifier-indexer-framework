@@ -2,12 +2,12 @@ package database
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"time"
 
 	"github.com/flare-foundation/go-flare-common/pkg/logger"
-	"github.com/pkg/errors"
 	"gorm.io/gorm"
 )
 
@@ -40,7 +40,7 @@ func (db *DB[B, T, E]) DropHistoryIteration(
 	var firstBlock B
 	err := db.g.Order("block_number").First(&firstBlock).Error
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, errors.Wrap(err, "Failed to get first block in the DB")
+		return nil, fmt.Errorf("failed to get first block in the DB: %w", err)
 	}
 
 	newState.LastHistoryDrop = uint64(time.Now().Unix())
@@ -77,7 +77,7 @@ func deleteInBatches(ctx context.Context, db *gorm.DB, deleteStart uint64, entit
 			Delete(entity)
 
 		if result.Error != nil {
-			return errors.Wrap(result.Error, "Failed to delete historic data in the DB")
+			return fmt.Errorf("failed to delete historic data in the DB: %w", result.Error)
 		}
 
 		if result.RowsAffected == 0 {
