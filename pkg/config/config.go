@@ -88,7 +88,7 @@ type EnvOverrideable interface {
 func (cfg *BaseConfig) ApplyEnvOverrides() {
 	var envCfg envConfig
 	if err := env.Parse(&envCfg); err != nil {
-		logger.Error("failed to parse environment variables for config overrides: %v", err)
+		logger.Errorf("failed to parse environment variables for config overrides: %v", err)
 		return
 	}
 

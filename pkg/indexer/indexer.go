@@ -323,10 +323,7 @@ func (ix *Indexer[B, T, E]) pollHistoryDropResults(
 func (ix *Indexer[B, T, E]) getIterationResults(
 	ctx context.Context, state *database.State,
 ) (*iterationResult[B, T, E], error) {
-	blkRange, err := ix.getBlockRange(state)
-	if err != nil {
-		return nil, err
-	}
+	blkRange := ix.getBlockRange(state)
 
 	switch blkRange.len() {
 	case 0:
@@ -372,12 +369,12 @@ func (br blockRange) len() uint64 {
 	return br.end - br.start
 }
 
-func (ix *Indexer[B, T, E]) getBlockRange(state *database.State) (*blockRange, error) {
+func (ix *Indexer[B, T, E]) getBlockRange(state *database.State) *blockRange {
 	result := new(blockRange)
 	result.start = ix.getStartBlock(state)
 	result.end = ix.getEndBlock(state, result.start)
 
-	return result, nil
+	return result
 }
 
 func (ix *Indexer[B, T, E]) getStartBlock(state *database.State) uint64 {
@@ -418,17 +415,16 @@ func (ix *Indexer[B, T, E]) getBlockResults(
 	results := make([]BlockResult[B, T, E], l)
 
 	for i := blkRange.start; i < blkRange.end; i++ {
-		blockNum := i
 		eg.Go(func() error {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			res, err := ix.blockchain.GetBlockResult(ctx, blockNum)
+			res, err := ix.blockchain.GetBlockResult(ctx, i)
 			if err != nil {
 				return err
 			}
 
-			results[blockNum-blkRange.start] = *res
+			results[i-blkRange.start] = *res
 			return nil
 		})
 	}

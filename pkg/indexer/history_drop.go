@@ -48,7 +48,8 @@ func (ix *Indexer[B, T, E]) getMinBlockWithinHistoryInterval(
 		return 0, err
 	}
 
-	if latestBlock.Timestamp-firstBlockTime < ix.historyDropInterval {
+	if latestBlock.Timestamp <= firstBlockTime ||
+		latestBlock.Timestamp-firstBlockTime < ix.historyDropInterval {
 		return ix.startBlockNumber, nil
 	}
 
@@ -77,7 +78,7 @@ func (ix *Indexer[B, T, E]) binarySearchBlockByTime(
 			return 0, fmt.Errorf("failed to get block timestamp during binary search: %w", err)
 		}
 
-		if latestTimestamp-blockTime <= interval {
+		if latestTimestamp >= blockTime && latestTimestamp-blockTime <= interval {
 			result = mid
 			if mid == low {
 				break

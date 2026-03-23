@@ -76,7 +76,7 @@ func New[B Block, T Transaction, E Event](cfg *config.DB, entities ExternalEntit
 
 	logger.Debug("migrated DB entities")
 
-	return &DB[B, T, E]{g: db}, err
+	return &DB[B, T, E]{g: db}, nil
 }
 
 func isEmptyStruct[T any]() bool {

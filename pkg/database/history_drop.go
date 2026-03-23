@@ -56,7 +56,7 @@ func (db *DB[B, T, E]) DropHistoryIteration(
 
 	logger.Infof("deleted blocks up to index %d", newState.FirstIndexedBlockNumber)
 
-	return &newState, err
+	return &newState, nil
 }
 
 type Deletable interface {
