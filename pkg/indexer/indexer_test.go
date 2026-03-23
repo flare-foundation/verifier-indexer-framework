@@ -114,7 +114,7 @@ func TestIndexer(t *testing.T) {
 
 	var historyDropLock sync.Mutex
 	historyDropResults := make(chan *database.State, 1)
-	upToDateBackoff := backoff.NewExponentialBackOff()
+	upToDateBackoff := backoff.NewExponentialBackOff(backoff.WithMaxElapsedTime(0))
 
 	state, err := indexer.runIteration(ctx, state, &historyDropLock, historyDropResults, upToDateBackoff)
 	require.NoError(t, err)

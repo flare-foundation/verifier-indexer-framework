@@ -26,94 +26,54 @@ func newBlockchainWithBackoff[B database.Block, T database.Transaction, E databa
 	}
 }
 
-func (bwb *blockchainWithBackoff[B, T, E]) GetLatestBlockInfo(ctx context.Context) (*BlockInfo, error) {
-	var blockInfo *BlockInfo
+func retryWithBackoff[B database.Block, T database.Transaction, E database.Event, R any](
+	ctx context.Context,
+	bwb *blockchainWithBackoff[B, T, E],
+	opName string,
+	op func(context.Context) (R, error),
+) (R, error) {
+	var result R
 	err := backoff.RetryNotify(
 		func() (err error) {
 			ctx, cancel := context.WithTimeout(ctx, bwb.requestTimeout)
 			defer cancel()
 
-			blockInfo, err = bwb.client.GetLatestBlockInfo(ctx)
+			result, err = op(ctx)
 			return err
 		},
 		bwb.newBackoff(ctx),
 		func(err error, d time.Duration) {
-			logger.Errorf("GetLatestBlockInfo error: %v. Will retry after %v", err, d)
+			logger.Errorf("%s error: %v. Will retry after %v", opName, err, d)
 		},
 	)
 	if err != nil {
-		return nil, errors.Wrap(err, "GetLatestBlockInfo failed")
+		var zero R
+		return zero, errors.Wrap(err, opName+" failed")
 	}
 
-	return blockInfo, nil
+	return result, nil
+}
+
+func (bwb *blockchainWithBackoff[B, T, E]) GetLatestBlockInfo(ctx context.Context) (*BlockInfo, error) {
+	return retryWithBackoff[B, T, E](ctx, bwb, "GetLatestBlockInfo", bwb.client.GetLatestBlockInfo)
 }
 
 func (bwb *blockchainWithBackoff[B, T, E]) GetBlockResult(ctx context.Context, blockNumber uint64) (*BlockResult[B, T, E], error) {
-	var blockResult *BlockResult[B, T, E]
-
-	err := backoff.RetryNotify(
-		func() (err error) {
-			ctx, cancel := context.WithTimeout(ctx, bwb.requestTimeout)
-			defer cancel()
-
-			blockResult, err = bwb.client.GetBlockResult(ctx, blockNumber)
-			return err
-		},
-		bwb.newBackoff(ctx),
-		func(err error, d time.Duration) {
-			logger.Errorf("GetBlockResult error: %v. Will retry after %v", err, d)
-		},
-	)
-	if err != nil {
-		return nil, errors.Wrap(err, "GetBlockResult failed")
-	}
-
-	return blockResult, nil
+	return retryWithBackoff[B, T, E](ctx, bwb, "GetBlockResult", func(ctx context.Context) (*BlockResult[B, T, E], error) {
+		return bwb.client.GetBlockResult(ctx, blockNumber)
+	})
 }
 
 func (bwb *blockchainWithBackoff[B, T, E]) GetBlockTimestamp(ctx context.Context, blockNumber uint64) (uint64, error) {
-	var timestamp uint64
-
-	err := backoff.RetryNotify(
-		func() (err error) {
-			ctx, cancel := context.WithTimeout(ctx, bwb.requestTimeout)
-			defer cancel()
-
-			timestamp, err = bwb.client.GetBlockTimestamp(ctx, blockNumber)
-			return err
-		},
-		bwb.newBackoff(ctx),
-		func(err error, d time.Duration) {
-			logger.Errorf("GetBlockTimestamp error: %v. Will retry after %v", err, d)
-		},
-	)
-	if err != nil {
-		return 0, errors.Wrap(err, "GetBlockTimestamp failed")
-	}
-
-	return timestamp, nil
+	return retryWithBackoff[B, T, E](ctx, bwb, "GetBlockTimestamp", func(ctx context.Context) (uint64, error) {
+		return bwb.client.GetBlockTimestamp(ctx, blockNumber)
+	})
 }
 
 func (bwb *blockchainWithBackoff[B, T, E]) GetServerInfo(ctx context.Context) (string, error) {
-	var serverInfo string
-	err := backoff.RetryNotify(
-		func() (err error) {
-			ctx, cancel := context.WithTimeout(ctx, bwb.requestTimeout)
-			defer cancel()
-
-			serverInfo, err = bwb.client.GetServerInfo(ctx)
-			return err
-		},
-		bwb.newBackoff(ctx),
-		func(err error, d time.Duration) {
-			logger.Errorf("GetServerInfo error: %v. Will retry after %v", err, d)
-		},
-	)
-	if err != nil {
-		return "", errors.Wrap(err, "GetServerInfo failed")
-	}
-
-	return serverInfo, nil
+	return retryWithBackoff[B, T, E](ctx, bwb, "GetServerInfo", func(ctx context.Context) (string, error) {
+		return bwb.client.GetServerInfo(ctx)
+	})
 }
 
 func (bwb *blockchainWithBackoff[B, T, E]) newBackoff(ctx context.Context) backoff.BackOff {

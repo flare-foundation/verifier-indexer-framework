@@ -84,6 +84,7 @@ type Indexer[B database.Block, T database.Transaction, E database.Event] struct 
 	maxBlockRange         uint64
 	maxConcurrency        int
 	startBlockNumber      uint64
+	computedStartBlock    uint64
 	endBlockNumber        uint64
 	historyDropInterval   uint64
 	historyDropFrequency  uint64
@@ -91,7 +92,7 @@ type Indexer[B database.Block, T database.Transaction, E database.Event] struct 
 }
 
 func (ix *Indexer[B, T, E]) Run(ctx context.Context) error {
-	upToDateBackoff := backoff.NewExponentialBackOff()
+	upToDateBackoff := backoff.NewExponentialBackOff(backoff.WithMaxElapsedTime(0))
 	historyDropResults := make(chan *database.State, 1)
 	var historyDropLock sync.Mutex
 
@@ -105,9 +106,16 @@ func (ix *Indexer[B, T, E]) Run(ctx context.Context) error {
 		return errors.Wrap(err, "failed to get initial start block number")
 	}
 
-	ix.startBlockNumber = startBlockNumber
+	ix.computedStartBlock = startBlockNumber
 
 	for {
+		select {
+		case <-ctx.Done():
+			logger.Info("indexer shutting down")
+			return ctx.Err()
+		default:
+		}
+
 		state, err = ix.runIteration(ctx, state, &historyDropLock, historyDropResults, upToDateBackoff)
 		if err != nil {
 			return err
@@ -192,7 +200,11 @@ func (ix *Indexer[B, T, E]) runIteration(
 
 			if results == nil {
 				logger.Debug("no new blocks to index, indexer is up to date")
-				time.Sleep(upToDateBackoff.NextBackOff())
+				nextInterval := upToDateBackoff.NextBackOff()
+				if nextInterval == backoff.Stop {
+					nextInterval = upToDateBackoff.MaxInterval
+				}
+				time.Sleep(nextInterval)
 				return nil
 			}
 
@@ -246,7 +258,14 @@ func (ix *Indexer[B, T, E]) maybeRunHistoryDrop(
 	go func(state database.State) {
 		var newState *database.State
 		defer func() {
-			historyDropResults <- newState
+			select {
+			case historyDropResults <- newState:
+			case <-ctx.Done():
+				// Context cancelled; unlock so the main loop can exit.
+				// The main loop will not receive from the channel in this case
+				// because it exits via the ctx.Done() check.
+				historyDropLock.Unlock()
+			}
 		}()
 
 		err := backoff.RetryNotify(
@@ -361,14 +380,18 @@ func (ix *Indexer[B, T, E]) getBlockRange(state *database.State) (*blockRange, e
 }
 
 func (ix *Indexer[B, T, E]) getStartBlock(state *database.State) uint64 {
-	if state.LastIndexedBlockNumber < ix.startBlockNumber {
-		return ix.startBlockNumber
+	if state.LastIndexedBlockNumber < ix.computedStartBlock {
+		return ix.computedStartBlock
 	}
 
 	return state.LastIndexedBlockNumber + 1
 }
 
 func (ix *Indexer[B, T, E]) getEndBlock(state *database.State, start uint64) uint64 {
+	if state.LastChainBlockNumber < ix.confirmations {
+		return start
+	}
+
 	latestConfirmedNum := state.LastChainBlockNumber - ix.confirmations
 
 	if latestConfirmedNum < start {
@@ -418,8 +441,14 @@ func (ix *Indexer[B, T, E]) getBlockResults(
 
 func (ix *Indexer[B, T, E]) saveData(ctx context.Context, results *iterationResult[B, T, E]) error {
 	blocks := make([]*B, len(results.blockResults))
-	var transactions []*T
-	var events []*E
+	totalTxs := 0
+	totalEvents := 0
+	for _, br := range results.blockResults {
+		totalTxs += len(br.Transactions)
+		totalEvents += len(br.Events)
+	}
+	transactions := make([]*T, 0, totalTxs)
+	events := make([]*E, 0, totalEvents)
 
 	for i := range results.blockResults {
 		blocks[i] = &results.blockResults[i].Block

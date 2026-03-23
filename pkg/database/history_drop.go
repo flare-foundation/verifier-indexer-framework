@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"time"
 
 	"github.com/flare-foundation/go-flare-common/pkg/logger"
@@ -19,6 +20,10 @@ func (db *DB[B, T, E]) DropHistoryIteration(
 	state *State,
 	intervalSeconds, lastBlockTime uint64,
 ) (*State, error) {
+	if lastBlockTime < intervalSeconds {
+		return state, nil
+	}
+
 	deleteStart := lastBlockTime - intervalSeconds
 	newState := *state
 
@@ -27,7 +32,7 @@ func (db *DB[B, T, E]) DropHistoryIteration(
 
 	// Delete in the order specified by HistoryDropOrder to avoid foreign key constraint violations.
 	for _, entity := range deleteOrder {
-		if err := deleteInBatches(db.g, deleteStart, entity); err != nil {
+		if err := deleteInBatches(ctx, db.g, deleteStart, entity); err != nil {
 			return nil, err
 		}
 	}
@@ -58,10 +63,17 @@ type Deletable interface {
 	TimestampField() string
 }
 
-func deleteInBatches(db *gorm.DB, deleteStart uint64, entity Deletable) error {
+var validColumnName = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+
+func deleteInBatches(ctx context.Context, db *gorm.DB, deleteStart uint64, entity Deletable) error {
+	col := entity.TimestampField()
+	if !validColumnName.MatchString(col) {
+		return fmt.Errorf("invalid column name: %q", col)
+	}
+
 	for {
-		result := db.Limit(deleteBatchSize).Where(
-			fmt.Sprintf("%s < ?", entity.TimestampField()), deleteStart).
+		result := db.WithContext(ctx).Limit(deleteBatchSize).Where(
+			fmt.Sprintf("%s < ?", col), deleteStart).
 			Delete(entity)
 
 		if result.Error != nil {

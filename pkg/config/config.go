@@ -30,20 +30,26 @@ var DefaultBaseConfig = BaseConfig{
 }
 
 type DB struct {
-	Host                 string `toml:"host"`
-	Port                 int    `toml:"port"`
-	Username             string `toml:"username"`
-	Password             string `toml:"password"`
-	DBName               string `toml:"db_name"`
-	LogQueries           bool   `toml:"log_queries"`
-	DropTableAtStart     bool   `toml:"drop_table_at_start"`
-	HistoryDrop          uint64 `toml:"history_drop"`
-	HistoryDropFrequency uint64 `toml:"history_drop_frequency"`
+	Host                   string `toml:"host"`
+	Port                   int    `toml:"port"`
+	Username               string `toml:"username"`
+	Password               string `toml:"password"`
+	DBName                 string `toml:"db_name"`
+	MaxOpenConns           int    `toml:"max_open_conns"`
+	MaxIdleConns           int    `toml:"max_idle_conns"`
+	ConnMaxLifetimeSeconds int    `toml:"conn_max_lifetime_seconds"`
+	LogQueries             bool   `toml:"log_queries"`
+	DropTableAtStart       bool   `toml:"drop_table_at_start"`
+	HistoryDrop            uint64 `toml:"history_drop"`
+	HistoryDropFrequency   uint64 `toml:"history_drop_frequency"`
 }
 
 var defaultDB = DB{
-	Host: "localhost",
-	Port: 5432,
+	Host:                   "localhost",
+	Port:                   5432,
+	MaxOpenConns:           25,
+	MaxIdleConns:           5,
+	ConnMaxLifetimeSeconds: 300,
 }
 
 type TimeoutConfig struct {
@@ -109,6 +115,22 @@ func (cfg *BaseConfig) ApplyEnvOverrides() {
 func CheckParameters(cfg *BaseConfig) error {
 	if cfg.Indexer.Confirmations == 0 {
 		return errors.New("number of confirmations should be set to a positive integer")
+	}
+
+	if cfg.Indexer.MaxConcurrency <= 0 {
+		return errors.New("max_concurrency must be a positive integer")
+	}
+
+	if cfg.Indexer.MaxBlockRange == 0 {
+		return errors.New("max_block_range must be a positive integer")
+	}
+
+	if cfg.Timeout.RequestTimeoutMillis <= 0 {
+		return errors.New("request_timeout_millis must be a positive integer")
+	}
+
+	if cfg.Timeout.BackoffMaxElapsedTimeSeconds <= 0 {
+		return errors.New("backoff_max_elapsed_time_seconds must be a positive integer")
 	}
 
 	return nil

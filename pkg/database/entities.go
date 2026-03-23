@@ -29,6 +29,10 @@ type Block interface {
 	HistoryDropOrder() []Deletable
 }
 
+// Transaction is intentionally defined as any to allow maximum flexibility
+// for implementors. Future versions may introduce a minimal interface.
 type Transaction any
 
+// Event is intentionally defined as any to allow maximum flexibility
+// for implementors. A struct{} value indicates no events are used.
 type Event any

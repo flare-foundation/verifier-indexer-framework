@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"time"
 
 	"github.com/flare-foundation/go-flare-common/pkg/logger"
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/config"
@@ -92,7 +93,27 @@ func Connect(cfg *config.DB) (*gorm.DB, error) {
 		CreateBatchSize: transactionBatchSize,
 	}
 
-	return gorm.Open(postgres.Open(dsn), &gormCfg)
+	db, err := gorm.Open(postgres.Open(dsn), &gormCfg)
+	if err != nil {
+		return nil, err
+	}
+
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get underlying sql.DB")
+	}
+
+	if cfg.MaxOpenConns > 0 {
+		sqlDB.SetMaxOpenConns(cfg.MaxOpenConns)
+	}
+	if cfg.MaxIdleConns > 0 {
+		sqlDB.SetMaxIdleConns(cfg.MaxIdleConns)
+	}
+	if cfg.ConnMaxLifetimeSeconds > 0 {
+		sqlDB.SetConnMaxLifetime(time.Duration(cfg.ConnMaxLifetimeSeconds) * time.Second)
+	}
+
+	return db, nil
 }
 
 func getGormLogLevel(cfg *config.DB) gormlogger.LogLevel {

@@ -2,6 +2,8 @@ package framework
 
 import (
 	"context"
+	"os/signal"
+	"syscall"
 
 	"github.com/alexflint/go-arg"
 	"github.com/flare-foundation/go-flare-common/pkg/logger"
@@ -63,7 +65,8 @@ func runWithArgs[B database.Block, C config.EnvOverrideable, T database.Transact
 		return err
 	}
 
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
 	err = saveVersion(ctx, db, bc, &cfg.BaseConfig)
 	if err != nil {
