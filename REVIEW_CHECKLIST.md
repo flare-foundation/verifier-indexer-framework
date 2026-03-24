@@ -2,15 +2,29 @@
 
 ## Bugs Found by Automated Review
 
-- [ ] **`tests/test_config.toml:18`** — Key `timeout_millis` should be `request_timeout_millis` (silently ignored, works by coincidence with default value)
-- [ ] **`.gitlab-ci.yml:3`** — `GOLANG_VERSION: "1.24.4"` doesn't match `go.mod` (`go 1.25.5`); CI builds with wrong Go version
-- [ ] **`pkg/config/config.go:91`** — `logger.Error` used with `%v` format verb; should be `logger.Errorf`
-- [ ] **`pkg/database/history_drop.go:59`** — `return &newState, err` should be `return &newState, nil` (err is always nil here but misleading)
-- [ ] **`pkg/indexer/history_drop.go:51,80`** — Uint64 subtraction without underflow guard (`latestBlock.Timestamp - firstBlockTime`)
-- [ ] **`pkg/indexer/indexer.go:421`** — `blockNum := i` is redundant (Go 1.22+ loop variable scoping)
-- [ ] **`pkg/indexer/indexer.go:375`** — `getBlockRange` returns `error` but never produces one; simplify signature
-- [ ] **`pkg/database/states.go`** — Empty file (only `package database`); remove or populate
-- [ ] **`pkg/database/database.go:79`** — `return &DB[B, T, E]{g: db}, err` should be `return &DB[B, T, E]{g: db}, nil`
+All items from the original automated review have been resolved:
+
+- [x] **`tests/test_config.toml:18`** — Key `timeout_millis` renamed to `request_timeout_millis`
+- [x] **`.gitlab-ci.yml:3`** — `GOLANG_VERSION` now matches `go.mod` (`go 1.25.5`)
+- [x] **`pkg/config/config.go`** — `ApplyEnvOverrides` now returns `error` instead of logging and swallowing
+- [x] **`pkg/database/history_drop.go`** — `return &newState, err` replaced with `return &newState, nil`
+- [x] **`pkg/indexer/history_drop.go`** — Uint64 subtractions are guarded by comparison checks
+- [x] **`pkg/indexer/indexer.go`** — Redundant `blockNum := i` removed (Go 1.22+ scoping)
+- [x] **`pkg/indexer/indexer.go`** — `getBlockRange` signature simplified (no longer returns unused error)
+- [x] **`pkg/database/states.go`** — Empty file removed
+- [x] **`pkg/database/database.go`** — `return &DB{g: db}, err` replaced with `return &DB{g: db}, nil`
+
+## Fixes Applied During Review
+
+- [x] **Connection leak in `database.New`** — `Close()` method added to `DB`; connection is closed on `DropTable`/`AutoMigrate` failure; framework defers `db.Close()` on shutdown
+- [x] **Missing context check in `deleteInBatches`** — Loop now checks `ctx.Done()` between batch iterations
+- [x] **Semaphore ignoring context** — Channel-based semaphore replaced with `sync/semaphore.Weighted` which respects context cancellation
+- [x] **`EnvOverrideable` silently swallowing errors** — Interface changed to `ApplyEnvOverrides() error`; errors propagate to caller
+- [x] **Missing validation** — `CheckParameters` now rejects `end_block_number < start_block_number`
+- [x] **Binary search error message** — Now includes the block number for easier debugging
+- [x] **Inconsistent range variable in `saveData`** — `for j := range results.blockResults[i].Events` changed to `for j := range resEvents`
+- [x] **Test file bug** — `config.BaseConfig` reference in integration test corrected to `config.Base`
+- [x] **Doc comments** — Added to all exported and unexported functions, methods, interfaces, and types
 
 ## Manual Review Areas
 
@@ -18,7 +32,7 @@
 
 - [ ] Verify `config.ReadFile` behavior when TOML file has unknown keys (does BurntSushi/toml silently ignore them or warn?)
 - [ ] Verify `config.ReadBuildVersion` works correctly when run from different working directories (reads relative paths: `PROJECT_VERSION`, `PROJECT_BUILD_DATE`, `PROJECT_COMMIT_HASH`)
-- [ ] Check that `DefaultBaseConfig` defaults are sensible for production use
+- [ ] Check that `DefaultBase` defaults are sensible for production use
 - [ ] Confirm `DropTableAtStart` intentionally does NOT drop the `Version` table (only `State`, blocks, transactions, events)
 
 ### Database Layer
@@ -35,8 +49,7 @@
 - [ ] Review `getInitialStartBlockNumber` logic when `historyDropInterval > 0` and `state.LastIndexedBlockNumber > 0` but falls behind the history window
 - [ ] Validate `getEndBlock` arithmetic for edge cases: `confirmations > LastChainBlockNumber`, `start > latestConfirmedNum`
 - [ ] Confirm `binarySearchBlockByTime` handles edge cases: equal timestamps, single-block range, all blocks within interval
-- [ ] Review the up-to-date backoff pattern in `runIteration` (lines 202-209) — `time.Sleep` inside a retry operation is unconventional; verify it doesn't interact badly with the outer backoff
-- [ ] Confirm `maxConcurrency` semaphore + errgroup pattern doesn't leak goroutines on context cancellation
+- [ ] Review the up-to-date backoff pattern in `runIteration` — `time.Sleep` inside a retry operation is unconventional; verify it doesn't interact badly with the outer backoff
 - [ ] Review whether `updateState` correctly handles the `LastIndexedBlockNumber == 0` check — is block 0 a valid block number?
 
 ### Concurrency & History Drop
@@ -63,7 +76,6 @@
 
 ### CI/CD
 
-- [ ] Fix Go version mismatch between CI and `go.mod`
 - [ ] Confirm `golangci-lint` version in CI is compatible with Go version and `.golangci.yml` config
 - [ ] Review whether `go get github.com/boumenot/gocover-cobertura` should be pinned to a version
 - [ ] Confirm test coverage artifacts are correctly generated and reported
@@ -72,12 +84,4 @@
 
 - [ ] Review `Block` interface — is `HistoryDropOrder() []Deletable` the right place for deletion ordering? (couples block type to deletion strategy)
 - [ ] Review `Transaction` and `Event` being defined as `any` — consider whether minimal interfaces would improve type safety
-- [ ] Confirm `EnvOverrideable` interface is used consistently (both `BaseConfig` and user configs must implement it)
 - [ ] Review `Input` struct — `DefaultConfig C` is a pointer type constraint but the zero value is used when not set
-
-### Documentation & Style
-
-- [ ] Confirm all exported types and functions have doc comments (per GOAI.md: "complete sentences starting with the name")
-- [ ] Verify naming follows GOAI.md conventions (no `Get` prefix, shortest descriptive names)
-- [ ] Run `golangci-lint run` and resolve any findings
-- [ ] Run `gofmt` and confirm no formatting issues
