@@ -12,9 +12,11 @@
 
 # Verifier Indexer Framework
 
-A generic, blockchain-agnostic framework for building blockchain indexers. It works with any chain whose blocks are numbered sequentially and contain timestamps — including EVM and UTXO-based chains.
+A generic, blockchain-agnostic framework for building blockchain indexers.
+It works with any chain whose blocks are numbered sequentially and contain timestamps — including EVM and UTXO-based chains.
 
-The framework provides a complete indexing pipeline: configuration loading, database management, a concurrent block-fetching loop with retry logic, state tracking, history pruning, and graceful shutdown. You supply the blockchain-specific pieces — a client that knows how to talk to your chain, and database entity types that describe what to store.
+The framework provides a complete indexing pipeline: configuration loading, database management, a concurrent block-fetching loop with retry logic, state tracking, history pruning, and graceful shutdown.
+You supply the blockchain-specific pieces — a client that knows how to talk to your chain, and database entity types that describe what to store.
 
 ## Installation
 
@@ -56,11 +58,90 @@ For an example of how to integrate please see the `cmd/example` directory.
 - Composes all of the above: loads config, connects to the DB, constructs your blockchain client, saves version info, and starts the indexer loop.
 - Exposes a single function `framework.Run` as the entrypoint.
 
+## How It Works
+
+### Startup
+
+1. `framework.Run` parses CLI arguments, loads the TOML config file, applies environment variable overrides, and validates parameters.
+2. The framework connects to PostgreSQL and auto-migrates all tables — your block, transaction, and event tables plus the internal `state` and `version` tables.
+3. It calls your `NewBlockchainClient` constructor to create the blockchain client.
+4. Build metadata (git tag, commit hash, build date) and the blockchain node version are saved to the `version` table.
+5. The indexer loads its persisted state from the database to determine where to resume.
+
+#### Determining the Start Block
+
+The start block depends on whether history drop is enabled:
+
+- **History drop disabled:**
+If the database already contains indexed blocks, the indexer resumes from the block after the last indexed one.
+On a fresh database, it starts from the configured `start_block_number`.
+- **History drop enabled:**
+The indexer performs a binary search on the chain to find the earliest block whose timestamp falls within the `history_drop` interval of the current chain tip.
+If the database already has blocks indexed past that point, it resumes from where it left off.
+Otherwise, it starts from the calculated block — meaning it will not waste time indexing blocks that would be immediately pruned.
+
+### Main Loop
+
+Each iteration of the main loop performs these steps:
+
+1. **Update chain state.**
+Fetch the latest block number and timestamp from the blockchain node.
+This is retried with exponential backoff on failure.
+2. **Poll history drop results.**
+Check (non-blocking) whether a background history drop has completed.
+If so, apply the updated first-indexed-block state.
+3. **Maybe start history drop.**
+If history drop is enabled and enough time has elapsed since the last drop, start a new one in a background goroutine.
+Only one history drop runs at a time.
+4. **Compute block range.**
+The next range to index starts after the last indexed block and ends at `chain_tip - confirmations`, capped at `max_block_range` blocks per iteration.
+If the range is empty, the indexer is up to date.
+5. **Fetch blocks.**
+All blocks in the range are fetched concurrently via `GetBlockResult`, bounded by `max_concurrency`.
+Each call is individually wrapped with a per-request timeout and exponential backoff.
+6. **Persist.**
+The fetched blocks, transactions, events, and updated state are written to the database in a single atomic transaction.
+Duplicate entries are silently skipped.
+7. **Repeat.**
+If a configured `end_block_number` has been reached, the indexer exits.
+Otherwise, it loops back to step 1.
+
+If any step fails after exhausting retries, the indexer returns a fatal error and shuts down.
+
+### When Up to Date
+
+When the indexer has processed all confirmed blocks, the computed block range is empty.
+Instead of busy-looping, it sleeps with exponential backoff — starting with short pauses and gradually increasing up to a maximum interval.
+As soon as the next iteration detects new confirmed blocks on the chain, the backoff resets and the indexer resumes fetching at full speed.
+
+### History Drop
+
+When `history_drop` is configured (in seconds), the indexer periodically prunes blocks and related entities older than that interval behind the chain tip:
+
+- A history drop is triggered when `history_drop_frequency` seconds (defaults to `history_drop`) have elapsed since the last drop.
+- It runs asynchronously in a background goroutine so it does not block the main indexing loop.
+- Entities are deleted in the order returned by `HistoryDropOrder` to respect foreign key constraints (e.g., transactions and events before blocks).
+- Deletions happen in batches of 1000 rows to avoid long-running database locks.
+- Only one history drop runs at a time — if one is already in progress, the next iteration skips it.
+- On completion, the state is updated with the new first indexed block and the timestamp of the last drop.
+
+### Error Handling and Retries
+
+Every blockchain RPC call is wrapped with exponential backoff and a per-request timeout (`request_timeout_millis`).
+If all retries are exhausted within `backoff_max_elapsed_time_seconds`, the error is considered fatal and the indexer shuts down.
+The same retry strategy applies to chain state updates, block fetching, and history drops independently.
+
+### Graceful Shutdown
+
+The indexer listens for `SIGINT` and `SIGTERM`.
+On receiving either signal, it cancels the context, allowing the current iteration to finish cleanly before the process exits.
+
 ## What You Must Implement
 
 ### 1. Block Entity
 
-A struct that will be stored as a database row. It must implement `database.Block`:
+A struct that will be stored as a database row.
+It must implement `database.Block`:
 
 ```go
 type Block interface {
@@ -70,7 +151,8 @@ type Block interface {
 }
 ```
 
-The struct should have GORM tags defining the table schema. `HistoryDropOrder` returns the list of entity types (as zero-value instances) that should be deleted during history pruning, ordered to respect foreign key constraints (e.g., transactions before blocks).
+The struct should have GORM tags defining the table schema.
+`HistoryDropOrder` returns the list of entity types (as zero-value instances) that should be deleted during history pruning, ordered to respect foreign key constraints (e.g., transactions before blocks).
 
 Each entity returned by `HistoryDropOrder` must implement `database.Deletable`:
 
@@ -82,11 +164,14 @@ type Deletable interface {
 
 ### 2. Transaction Entity
 
-Any struct with GORM tags. There is no required interface — `database.Transaction` is defined as `any`. The framework stores these in batches alongside their parent blocks.
+Any struct with GORM tags.
+There is no required interface — `database.Transaction` is defined as `any`.
+The framework stores these in batches alongside their parent blocks.
 
 ### 3. Event Entity (Optional)
 
-Any struct with GORM tags, or `struct{}` if your chain does not produce events. When `struct{}` is used, the framework skips event table creation and storage entirely.
+Any struct with GORM tags, or `struct{}` if your chain does not produce events.
+When `struct{}` is used, the framework skips event table creation and storage entirely.
 
 ### 4. Blockchain Client
 
@@ -120,7 +205,10 @@ type EnvOverrideable interface {
 }
 ```
 
-This holds any blockchain-specific config fields (e.g., RPC URL, API key). It is decoded from the `[blockchain]` section of the TOML file. `ApplyEnvOverrides` lets you override fields from environment variables. If you have no blockchain-specific config, use a no-op implementation.
+This holds any blockchain-specific config fields (e.g., RPC URL, API key).
+It is decoded from the `[blockchain]` section of the TOML file.
+`ApplyEnvOverrides` lets you override fields from environment variables.
+If you have no blockchain-specific config, use a no-op implementation.
 
 ### 6. Constructor Function
 
@@ -151,7 +239,8 @@ func main() {
 
 The four type parameters are: `[Block, Config, Transaction, Event]`.
 
-Set `DefaultConfig` to provide defaults for your blockchain-specific fields — these are used before the TOML file and env overrides are applied. If you have no defaults, this can be omitted (zero value).
+Set `DefaultConfig` to provide defaults for your blockchain-specific fields — these are used before the TOML file and env overrides are applied.
+If you have no defaults, this can be omitted (zero value).
 
 ## Configuration Reference
 
@@ -206,7 +295,8 @@ All `[db]` credential fields can be overridden with environment variables: `DB_H
 
 ## Minimal Working Example
 
-See `cmd/example/` for a complete skeleton. The key structure is:
+See `cmd/example/` for a complete skeleton.
+The key structure is:
 
 1. Define your DB entity structs with GORM tags.
 2. Implement `database.Block` on your block struct.
