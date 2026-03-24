@@ -9,6 +9,7 @@ import (
 	"github.com/cenkalti/backoff/v4"
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/config"
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/database"
+	"github.com/flare-foundation/verifier-indexer-framework/pkg/logger"
 	"github.com/stretchr/testify/require"
 )
 
@@ -102,7 +103,7 @@ func TestIndexer(t *testing.T) {
 	db := &mockDB{}
 	chain := &mockBlockchain{}
 
-	indexer := New(&cfg, db, chain)
+	indexer := New(&cfg, db, chain, logger.Nop{})
 	require.NotNil(t, indexer)
 
 	require.Equal(t, uint64(1), indexer.confirmations)
@@ -138,7 +139,7 @@ func TestGetInitialStartBlockNumber(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("returns zero when no previous state exists", func(t *testing.T) {
-		ix := Indexer[dbBlock, dbTransaction, struct{}]{}
+		ix := Indexer[dbBlock, dbTransaction, struct{}]{log: logger.Nop{}}
 		var state database.State
 
 		startBlock, err := ix.getInitialStartBlockNumber(ctx, &state)
@@ -147,7 +148,7 @@ func TestGetInitialStartBlockNumber(t *testing.T) {
 	})
 
 	t.Run("returns last processed block number plus one when previous state exists", func(t *testing.T) {
-		ix := Indexer[dbBlock, dbTransaction, struct{}]{}
+		ix := Indexer[dbBlock, dbTransaction, struct{}]{log: logger.Nop{}}
 		state := database.State{LastIndexedBlockNumber: 42}
 
 		startBlock, err := ix.getInitialStartBlockNumber(ctx, &state)
@@ -158,6 +159,7 @@ func TestGetInitialStartBlockNumber(t *testing.T) {
 	t.Run("uses configured start block on fresh database", func(t *testing.T) {
 		ix := Indexer[dbBlock, dbTransaction, struct{}]{
 			startBlockNumber: 500,
+			log:              logger.Nop{},
 		}
 		var state database.State
 
@@ -231,6 +233,7 @@ func TestGetEndBlock(t *testing.T) {
 			ix := Indexer[dbBlock, dbTransaction, struct{}]{
 				confirmations: tc.confirmations,
 				maxBlockRange: tc.maxBlockRange,
+				log:           logger.Nop{},
 			}
 			state := &database.State{
 				LastChainBlockNumber: tc.chainBlock,
@@ -246,6 +249,7 @@ func TestGetStartBlock(t *testing.T) {
 	t.Run("returns computed start when ahead of last indexed", func(t *testing.T) {
 		ix := Indexer[dbBlock, dbTransaction, struct{}]{
 			computedStartBlock: 100,
+			log:                logger.Nop{},
 		}
 		state := &database.State{LastIndexedBlockNumber: 50}
 
@@ -255,6 +259,7 @@ func TestGetStartBlock(t *testing.T) {
 	t.Run("returns last indexed plus one when caught up", func(t *testing.T) {
 		ix := Indexer[dbBlock, dbTransaction, struct{}]{
 			computedStartBlock: 100,
+			log:                logger.Nop{},
 		}
 		state := &database.State{LastIndexedBlockNumber: 200}
 
@@ -264,6 +269,7 @@ func TestGetStartBlock(t *testing.T) {
 	t.Run("returns last indexed plus one when equal to computed start", func(t *testing.T) {
 		ix := Indexer[dbBlock, dbTransaction, struct{}]{
 			computedStartBlock: 100,
+			log:                logger.Nop{},
 		}
 		state := &database.State{LastIndexedBlockNumber: 100}
 
@@ -350,6 +356,7 @@ func TestShouldRunHistoryDrop(t *testing.T) {
 	t.Run("disabled when interval is zero", func(t *testing.T) {
 		ix := Indexer[dbBlock, dbTransaction, struct{}]{
 			historyDropInterval: 0,
+			log:                 logger.Nop{},
 		}
 		state := &database.State{LastChainBlockTimestamp: 1000, LastHistoryDrop: 0}
 		require.False(t, ix.shouldRunHistoryDrop(state))
@@ -359,6 +366,7 @@ func TestShouldRunHistoryDrop(t *testing.T) {
 		ix := Indexer[dbBlock, dbTransaction, struct{}]{
 			historyDropInterval:  100,
 			historyDropFrequency: 100,
+			log:                  logger.Nop{},
 		}
 		state := &database.State{LastChainBlockTimestamp: 50, LastHistoryDrop: 100}
 		require.False(t, ix.shouldRunHistoryDrop(state))
@@ -368,6 +376,7 @@ func TestShouldRunHistoryDrop(t *testing.T) {
 		ix := Indexer[dbBlock, dbTransaction, struct{}]{
 			historyDropInterval:  100,
 			historyDropFrequency: 100,
+			log:                  logger.Nop{},
 		}
 		state := &database.State{LastChainBlockTimestamp: 150, LastHistoryDrop: 100}
 		require.False(t, ix.shouldRunHistoryDrop(state))
@@ -377,6 +386,7 @@ func TestShouldRunHistoryDrop(t *testing.T) {
 		ix := Indexer[dbBlock, dbTransaction, struct{}]{
 			historyDropInterval:  100,
 			historyDropFrequency: 100,
+			log:                  logger.Nop{},
 		}
 		state := &database.State{LastChainBlockTimestamp: 200, LastHistoryDrop: 100}
 		require.True(t, ix.shouldRunHistoryDrop(state))
@@ -386,6 +396,7 @@ func TestShouldRunHistoryDrop(t *testing.T) {
 		ix := Indexer[dbBlock, dbTransaction, struct{}]{
 			historyDropInterval:  100,
 			historyDropFrequency: 100,
+			log:                  logger.Nop{},
 		}
 		state := &database.State{LastChainBlockTimestamp: 200, LastHistoryDrop: 0}
 		require.True(t, ix.shouldRunHistoryDrop(state))
@@ -412,6 +423,7 @@ func TestBinarySearchBlockByTime(t *testing.T) {
 	newIndexer := func() *Indexer[dbBlock, dbTransaction, struct{}] {
 		return &Indexer[dbBlock, dbTransaction, struct{}]{
 			blockchain: blockchain,
+			log:        logger.Nop{},
 		}
 	}
 

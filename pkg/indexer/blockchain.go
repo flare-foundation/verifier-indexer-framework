@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
-	"github.com/flare-foundation/go-flare-common/pkg/logger"
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/database"
+	"github.com/flare-foundation/verifier-indexer-framework/pkg/logger"
 )
 
 // blockchainWithBackoff wraps a BlockchainClient and retries each call with
@@ -16,17 +16,19 @@ type blockchainWithBackoff[B database.Block, T database.Transaction, E database.
 	client         BlockchainClient[B, T, E]
 	maxElapsedTime time.Duration
 	requestTimeout time.Duration
+	log            logger.Logger
 }
 
 // newBlockchainWithBackoff returns a blockchainWithBackoff that wraps the given
 // client with the specified backoff and request timeout durations.
 func newBlockchainWithBackoff[B database.Block, T database.Transaction, E database.Event](
-	client BlockchainClient[B, T, E], maxElapsedTime, requestTimeout time.Duration,
+	client BlockchainClient[B, T, E], maxElapsedTime, requestTimeout time.Duration, log logger.Logger,
 ) *blockchainWithBackoff[B, T, E] {
 	return &blockchainWithBackoff[B, T, E]{
 		client:         client,
 		maxElapsedTime: maxElapsedTime,
 		requestTimeout: requestTimeout,
+		log:            log,
 	}
 }
 
@@ -49,7 +51,7 @@ func retryWithBackoff[B database.Block, T database.Transaction, E database.Event
 		},
 		bwb.newBackoff(ctx),
 		func(err error, d time.Duration) {
-			logger.Errorf("%s error: %v. Will retry after %v", opName, err, d)
+			bwb.log.Errorf("%s error: %v. Will retry after %v", opName, err, d)
 		},
 	)
 	if err != nil {

@@ -7,8 +7,8 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/flare-foundation/go-flare-common/pkg/logger"
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/config"
+	"github.com/flare-foundation/verifier-indexer-framework/pkg/logger"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -32,7 +32,8 @@ type ExternalEntities[B Block, T Transaction, E Event] struct {
 
 // DB wraps a gorm.DB connection with generic type parameters for block, transaction, and event entities.
 type DB[B Block, T Transaction, E Event] struct {
-	g *gorm.DB
+	g   *gorm.DB
+	log logger.Logger
 }
 
 // Close closes the underlying database connection.
@@ -62,7 +63,7 @@ func InitVersion() *Version {
 // New connects to the database, optionally drops existing tables, runs migrations,
 // and returns a ready-to-use DB instance.
 // The caller should defer Close on the returned DB.
-func New[B Block, T Transaction, E Event](cfg *config.DB, entities ExternalEntities[B, T, E]) (*DB[B, T, E], error) {
+func New[B Block, T Transaction, E Event](cfg *config.DB, entities ExternalEntities[B, T, E], log logger.Logger) (*DB[B, T, E], error) {
 	db, err := Connect(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
@@ -74,10 +75,10 @@ func New[B Block, T Transaction, E Event](cfg *config.DB, entities ExternalEntit
 		}
 	}
 
-	logger.Debug("connected to the DB")
+	log.Debug("connected to the DB")
 
 	if cfg.DropTableAtStart {
-		logger.Info("DB tables dropped at start")
+		log.Info("DB tables dropped at start")
 
 		if isEmptyStruct[E]() {
 			err = db.Migrator().DropTable(State{}, entities.Block, entities.Transaction)
@@ -100,9 +101,9 @@ func New[B Block, T Transaction, E Event](cfg *config.DB, entities ExternalEntit
 		return nil, fmt.Errorf("failed to auto-migrate tables: %w", err)
 	}
 
-	logger.Debug("migrated DB entities")
+	log.Debug("migrated DB entities")
 
-	return &DB[B, T, E]{g: db}, nil
+	return &DB[B, T, E]{g: db, log: log}, nil
 }
 
 // isEmptyStruct reports whether the type parameter T is struct{}.

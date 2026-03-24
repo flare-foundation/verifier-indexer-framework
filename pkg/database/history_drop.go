@@ -7,7 +7,6 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/flare-foundation/go-flare-common/pkg/logger"
 	"gorm.io/gorm"
 )
 
@@ -56,7 +55,7 @@ func (db *DB[B, T, E]) DropHistoryIteration(
 	newState.FirstIndexedBlockNumber = firstBlock.GetBlockNumber()
 	newState.FirstIndexedBlockTimestamp = firstBlock.GetTimestamp()
 
-	logger.Infof("deleted blocks up to index %d", newState.FirstIndexedBlockNumber)
+	db.log.Infof("deleted blocks up to index %d", newState.FirstIndexedBlockNumber)
 
 	return &newState, nil
 }

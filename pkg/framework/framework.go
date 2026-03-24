@@ -6,11 +6,12 @@ import (
 	"syscall"
 
 	"github.com/alexflint/go-arg"
-	"github.com/flare-foundation/go-flare-common/pkg/logger"
+	commonlogger "github.com/flare-foundation/go-flare-common/pkg/logger"
 
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/config"
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/database"
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/indexer"
+	"github.com/flare-foundation/verifier-indexer-framework/pkg/logger"
 )
 
 // CLIArgs holds the command-line arguments for the framework.
@@ -64,13 +65,14 @@ func runWithArgs[B database.Block, C config.EnvOverrideable, T database.Transact
 		return err
 	}
 
-	logger.Set(cfg.Logger)
+	commonlogger.Set(cfg.Logger)
+	log := logger.Adapter{}
 
 	db, err := database.New(&cfg.DB, database.ExternalEntities[B, T, E]{
 		Block:       new(B),
 		Transaction: new(T),
 		Event:       new(E),
-	})
+	}, log)
 	if err != nil {
 		return err
 	}
@@ -84,19 +86,19 @@ func runWithArgs[B database.Block, C config.EnvOverrideable, T database.Transact
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	err = saveVersion(ctx, db, bc, &cfg.Base)
+	err = saveVersion(ctx, db, bc, &cfg.Base, log)
 	if err != nil {
 		return err
 	}
 
-	indexer := indexer.New(&cfg.Base, db, bc)
+	ix := indexer.New(&cfg.Base, db, bc, log)
 
-	return indexer.Run(ctx)
+	return ix.Run(ctx)
 }
 
 // saveVersion persists build metadata and blockchain node version to the database.
 func saveVersion[B database.Block, T database.Transaction, E database.Event](
-	ctx context.Context, db *database.DB[B, T, E], blockchain indexer.BlockchainClient[B, T, E], cfg *config.Base,
+	ctx context.Context, db *database.DB[B, T, E], blockchain indexer.BlockchainClient[B, T, E], cfg *config.Base, log logger.Logger,
 ) error {
 	version := database.InitVersion()
 	version.NumConfirmations = cfg.Indexer.Confirmations
@@ -104,7 +106,7 @@ func saveVersion[B database.Block, T database.Transaction, E database.Event](
 
 	buildVersion, err := config.ReadBuildVersion()
 	if err != nil {
-		logger.Warn("failed to read the project build info")
+		log.Warn("failed to read the project build info")
 	} else {
 		version.GitTag = buildVersion.GitTag
 		version.GitHash = buildVersion.GitHash
@@ -113,7 +115,7 @@ func saveVersion[B database.Block, T database.Transaction, E database.Event](
 
 	nodeVersion, err := blockchain.GetServerInfo(ctx)
 	if err != nil {
-		logger.Warn("failed to fetch blockchain node info")
+		log.Warn("failed to fetch blockchain node info")
 	} else {
 		version.NodeVersion = nodeVersion
 	}

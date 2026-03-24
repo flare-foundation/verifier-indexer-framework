@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/flare-foundation/go-flare-common/pkg/logger"
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/database"
 )
 
@@ -16,7 +15,7 @@ func (ix *Indexer[B, T, E]) shouldRunHistoryDrop(state *database.State) bool {
 	}
 
 	if state.LastChainBlockTimestamp-state.LastHistoryDrop >= ix.historyDropFrequency {
-		logger.Debugf(
+		ix.log.Debugf(
 			"history drop should run: last drop %d, last block %d, frequency %d",
 			state.LastHistoryDrop, state.LastChainBlockTimestamp, ix.historyDropFrequency,
 		)
@@ -32,7 +31,7 @@ func (ix *Indexer[B, T, E]) shouldRunHistoryDrop(state *database.State) bool {
 func (ix *Indexer[B, T, E]) runHistoryDrop(
 	ctx context.Context, state *database.State,
 ) (*database.State, error) {
-	logger.Debugf("running history drop")
+	ix.log.Debugf("running history drop")
 
 	return ix.db.DropHistoryIteration(
 		ctx, state, ix.historyDropInterval, state.LastChainBlockTimestamp,
