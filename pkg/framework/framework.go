@@ -52,8 +52,13 @@ func runWithArgs[B database.Block, C config.EnvOverrideable, T database.Transact
 		return err
 	}
 
-	cfg.ApplyEnvOverrides()
-	cfg.Blockchain.ApplyEnvOverrides()
+	if err := cfg.ApplyEnvOverrides(); err != nil {
+		return err
+	}
+
+	if err := cfg.Blockchain.ApplyEnvOverrides(); err != nil {
+		return err
+	}
 
 	if err := config.CheckParameters(&cfg.Base); err != nil {
 		return err
@@ -69,6 +74,7 @@ func runWithArgs[B database.Block, C config.EnvOverrideable, T database.Transact
 	if err != nil {
 		return err
 	}
+	defer db.Close() //nolint:errcheck // best-effort cleanup on shutdown
 
 	bc, err := input.NewBlockchainClient(cfg.Blockchain)
 	if err != nil {

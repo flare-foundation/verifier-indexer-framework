@@ -35,6 +35,16 @@ type DB[B Block, T Transaction, E Event] struct {
 	g *gorm.DB
 }
 
+// Close closes the underlying database connection.
+func (db *DB[B, T, E]) Close() error {
+	sqlDB, err := db.g.DB()
+	if err != nil {
+		return fmt.Errorf("failed to get underlying sql.DB for close: %w", err)
+	}
+
+	return sqlDB.Close()
+}
+
 // initState returns a new State with the global state primary key.
 func initState() *State {
 	return &State{
@@ -51,10 +61,17 @@ func InitVersion() *Version {
 
 // New connects to the database, optionally drops existing tables, runs migrations,
 // and returns a ready-to-use DB instance.
+// The caller should defer Close on the returned DB.
 func New[B Block, T Transaction, E Event](cfg *config.DB, entities ExternalEntities[B, T, E]) (*DB[B, T, E], error) {
 	db, err := Connect(cfg)
 	if err != nil {
 		return nil, err
+	}
+
+	closeOnError := func() {
+		if sqlDB, err := db.DB(); err == nil {
+			sqlDB.Close() //nolint:errcheck // best-effort cleanup on initialization failure
+		}
 	}
 
 	logger.Debug("connected to the DB")
@@ -68,6 +85,7 @@ func New[B Block, T Transaction, E Event](cfg *config.DB, entities ExternalEntit
 			err = db.Migrator().DropTable(State{}, entities.Block, entities.Transaction, entities.Event)
 		}
 		if err != nil {
+			closeOnError()
 			return nil, err
 		}
 	}
@@ -78,6 +96,7 @@ func New[B Block, T Transaction, E Event](cfg *config.DB, entities ExternalEntit
 		err = db.AutoMigrate(State{}, Version{}, entities.Block, entities.Transaction, entities.Event)
 	}
 	if err != nil {
+		closeOnError()
 		return nil, err
 	}
 

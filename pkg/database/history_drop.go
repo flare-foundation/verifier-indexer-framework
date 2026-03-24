@@ -78,6 +78,12 @@ func deleteInBatches(ctx context.Context, db *gorm.DB, deleteStart uint64, entit
 	}
 
 	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		result := db.WithContext(ctx).Limit(deleteBatchSize).Where(
 			fmt.Sprintf("%s < ?", col), deleteStart).
 			Delete(entity)

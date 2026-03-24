@@ -52,7 +52,7 @@ func (e ExampleBlockchain) GetServerInfo(context.Context) (string, error) {
 type ExampleConfig struct{}
 
 // ApplyEnvOverrides is a no-op required to satisfy the EnvOverrideable interface.
-func (c *ExampleConfig) ApplyEnvOverrides() {}
+func (c *ExampleConfig) ApplyEnvOverrides() error { return nil }
 
 type dbBlock struct{}
 

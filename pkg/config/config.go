@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/BurntSushi/toml"
 	"github.com/caarlos0/env/v11"
@@ -82,16 +83,17 @@ func ReadFile[T any](filepath string, cfg T) error {
 	return err
 }
 
+// EnvOverrideable is implemented by configuration types that support overriding
+// fields from environment variables.
 type EnvOverrideable interface {
-	ApplyEnvOverrides()
+	ApplyEnvOverrides() error
 }
 
 // ApplyEnvOverrides overrides database connection fields in Base with values from environment variables.
-func (cfg *Base) ApplyEnvOverrides() {
+func (cfg *Base) ApplyEnvOverrides() error {
 	var envCfg envCfg
 	if err := env.Parse(&envCfg); err != nil {
-		logger.Errorf("failed to parse environment variables for config overrides: %v", err)
-		return
+		return fmt.Errorf("failed to parse environment variables for config overrides: %w", err)
 	}
 
 	if envCfg.DBHost != "" {
@@ -113,6 +115,8 @@ func (cfg *Base) ApplyEnvOverrides() {
 	if envCfg.DBName != "" {
 		cfg.DB.DBName = envCfg.DBName
 	}
+
+	return nil
 }
 
 // CheckParameters validates that required configuration fields in Base have acceptable values.
@@ -135,6 +139,10 @@ func CheckParameters(cfg *Base) error {
 
 	if cfg.Timeout.BackoffMaxElapsedTimeSeconds <= 0 {
 		return errors.New("backoff_max_elapsed_time_seconds must be a positive integer")
+	}
+
+	if cfg.Indexer.EndBlockNumber != 0 && cfg.Indexer.EndBlockNumber < cfg.Indexer.StartBlockNumber {
+		return errors.New("end_block_number must be greater than or equal to start_block_number")
 	}
 
 	return nil

@@ -12,6 +12,7 @@ import (
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/config"
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/database"
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/semaphore"
 )
 
 // BlockchainClient defines the operations the indexer requires from a blockchain node.
@@ -441,7 +442,7 @@ func (ix *Indexer[B, T, E]) getEndBlock(state *database.State, start uint64) uin
 func (ix *Indexer[B, T, E]) getBlockResults(
 	ctx context.Context, blkRange *blockRange,
 ) ([]BlockResult[B, T, E], error) {
-	sem := make(chan struct{}, ix.maxConcurrency)
+	sem := semaphore.NewWeighted(int64(ix.maxConcurrency))
 	eg, ctx := errgroup.WithContext(ctx)
 
 	l := blkRange.len()
@@ -450,8 +451,10 @@ func (ix *Indexer[B, T, E]) getBlockResults(
 
 	for i := blkRange.start; i < blkRange.end; i++ {
 		eg.Go(func() error {
-			sem <- struct{}{}
-			defer func() { <-sem }()
+			if err := sem.Acquire(ctx, 1); err != nil {
+				return err
+			}
+			defer sem.Release(1)
 
 			res, err := ix.blockchain.GetBlockResult(ctx, i)
 			if err != nil {
@@ -492,7 +495,7 @@ func (ix *Indexer[B, T, E]) saveData(ctx context.Context, results *iterationResu
 		}
 
 		resEvents := results.blockResults[i].Events
-		for j := range results.blockResults[i].Events {
+		for j := range resEvents {
 			events = append(events, &resEvents[j])
 		}
 	}

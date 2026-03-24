@@ -84,7 +84,7 @@ func (ix *Indexer[B, T, E]) binarySearchBlockByTime(
 
 		blockTime, err := ix.blockchain.GetBlockTimestamp(ctx, mid)
 		if err != nil {
-			return 0, fmt.Errorf("failed to get block timestamp during binary search: %w", err)
+			return 0, fmt.Errorf("failed to get block timestamp for block %d during binary search: %w", mid, err)
 		}
 
 		if latestTimestamp >= blockTime && latestTimestamp-blockTime <= interval {
