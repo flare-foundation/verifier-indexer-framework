@@ -121,7 +121,7 @@ func (ix *Indexer[B, T, E]) Run(ctx context.Context) error {
 
 	state, err := ix.db.GetState(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get indexer state from database: %w", err)
 	}
 
 	startBlockNumber, err := ix.getInitialStartBlockNumber(ctx, state)
@@ -504,7 +504,7 @@ func (ix *Indexer[B, T, E]) saveData(ctx context.Context, results *iterationResu
 
 	err := ix.db.SaveAllEntities(ctx, blocks, transactions, events, results.state)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to save entities to database: %w", err)
 	}
 
 	logger.Debug("data saved to the DB")

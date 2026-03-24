@@ -65,7 +65,7 @@ func InitVersion() *Version {
 func New[B Block, T Transaction, E Event](cfg *config.DB, entities ExternalEntities[B, T, E]) (*DB[B, T, E], error) {
 	db, err := Connect(cfg)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
 
 	closeOnError := func() {
@@ -86,7 +86,7 @@ func New[B Block, T Transaction, E Event](cfg *config.DB, entities ExternalEntit
 		}
 		if err != nil {
 			closeOnError()
-			return nil, err
+			return nil, fmt.Errorf("failed to drop tables: %w", err)
 		}
 	}
 
@@ -97,7 +97,7 @@ func New[B Block, T Transaction, E Event](cfg *config.DB, entities ExternalEntit
 	}
 	if err != nil {
 		closeOnError()
-		return nil, err
+		return nil, fmt.Errorf("failed to auto-migrate tables: %w", err)
 	}
 
 	logger.Debug("migrated DB entities")

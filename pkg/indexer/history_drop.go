@@ -46,12 +46,12 @@ func (ix *Indexer[B, T, E]) getMinBlockWithinHistoryInterval(
 ) (uint64, error) {
 	firstBlockTime, err := ix.blockchain.GetBlockTimestamp(ctx, ix.startBlockNumber)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("failed to get timestamp for start block %d: %w", ix.startBlockNumber, err)
 	}
 
 	latestBlock, err := ix.blockchain.GetLatestBlockInfo(ctx)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("failed to get latest block info: %w", err)
 	}
 
 	if latestBlock.Timestamp <= firstBlockTime ||

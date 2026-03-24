@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -35,7 +36,7 @@ func ReadBuildVersion() (*BuildConfig, error) {
 	}
 	buildDate, err := time.Parse(time.RFC3339, strings.TrimSpace(string(projectBuildDateBytes)))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse build date: %w", err)
 	}
 
 	return &BuildConfig{
