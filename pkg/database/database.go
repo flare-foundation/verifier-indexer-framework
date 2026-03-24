@@ -22,28 +22,35 @@ const (
 	globalVersionID      = 1
 )
 
+// ExternalEntities holds pointers to the user-defined block, transaction, and event types
+// used for database schema migration and operations.
 type ExternalEntities[B Block, T Transaction, E Event] struct {
 	Block       *B
 	Transaction *T
 	Event       *E
 }
 
+// DB wraps a gorm.DB connection with generic type parameters for block, transaction, and event entities.
 type DB[B Block, T Transaction, E Event] struct {
 	g *gorm.DB
 }
 
+// initState returns a new State with the global state primary key.
 func initState() *State {
 	return &State{
 		ID: globalStateID,
 	}
 }
 
+// InitVersion returns a new Version with the global version primary key.
 func InitVersion() *Version {
 	return &Version{
 		ID: globalVersionID,
 	}
 }
 
+// New connects to the database, optionally drops existing tables, runs migrations,
+// and returns a ready-to-use DB instance.
 func New[B Block, T Transaction, E Event](cfg *config.DB, entities ExternalEntities[B, T, E]) (*DB[B, T, E], error) {
 	db, err := Connect(cfg)
 	if err != nil {
@@ -79,11 +86,14 @@ func New[B Block, T Transaction, E Event](cfg *config.DB, entities ExternalEntit
 	return &DB[B, T, E]{g: db}, nil
 }
 
+// isEmptyStruct reports whether the type parameter T is struct{}.
 func isEmptyStruct[T any]() bool {
 	_, ok := any(*new(T)).(struct{})
 	return ok
 }
 
+// Connect opens a PostgreSQL connection using the provided configuration and
+// applies connection pool settings.
 func Connect(cfg *config.DB) (*gorm.DB, error) {
 	dsn := formatDSN(cfg)
 
@@ -116,6 +126,7 @@ func Connect(cfg *config.DB) (*gorm.DB, error) {
 	return db, nil
 }
 
+// getGormLogLevel returns the gorm log level based on the database configuration.
 func getGormLogLevel(cfg *config.DB) gormlogger.LogLevel {
 	if cfg.LogQueries {
 		return gormlogger.Info
@@ -124,6 +135,7 @@ func getGormLogLevel(cfg *config.DB) gormlogger.LogLevel {
 	return gormlogger.Silent
 }
 
+// formatDSN builds a PostgreSQL connection string from the database configuration.
 func formatDSN(cfg *config.DB) string {
 	u := url.URL{
 		Scheme: "postgres",
@@ -135,6 +147,8 @@ func formatDSN(cfg *config.DB) string {
 	return u.String()
 }
 
+// GetState retrieves the current indexer state from the database, returning a
+// fresh initial state if no record exists.
 func (db *DB[B, T, E]) GetState(ctx context.Context) (*State, error) {
 	state := new(State)
 
@@ -149,6 +163,8 @@ func (db *DB[B, T, E]) GetState(ctx context.Context) (*State, error) {
 	return state, nil
 }
 
+// SaveAllEntities persists blocks, transactions, events, and indexer state in a single
+// database transaction, skipping conflicts on duplicate entries.
 func (db *DB[B, T, E]) SaveAllEntities(
 	ctx context.Context, blocks []*B, transactions []*T, events []*E, state *State,
 ) error {
@@ -191,6 +207,7 @@ func (db *DB[B, T, E]) SaveAllEntities(
 	})
 }
 
+// SaveVersion persists the given version record to the database.
 func (db *DB[B, T, E]) SaveVersion(
 	ctx context.Context, version *Version,
 ) error {

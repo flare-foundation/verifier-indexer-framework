@@ -8,6 +8,8 @@ import (
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/database"
 )
 
+// shouldRunHistoryDrop reports whether enough time has elapsed since the last
+// history drop to warrant running another one.
 func (ix *Indexer[B, T, E]) shouldRunHistoryDrop(state *database.State) bool {
 	if ix.historyDropInterval == 0 || state.LastChainBlockTimestamp < state.LastHistoryDrop {
 		return false
@@ -25,6 +27,8 @@ func (ix *Indexer[B, T, E]) shouldRunHistoryDrop(state *database.State) bool {
 	return false
 }
 
+// runHistoryDrop executes a single history drop iteration, deleting blocks older
+// than the configured interval.
 func (ix *Indexer[B, T, E]) runHistoryDrop(
 	ctx context.Context, state *database.State,
 ) (*database.State, error) {
@@ -35,6 +39,8 @@ func (ix *Indexer[B, T, E]) runHistoryDrop(
 	)
 }
 
+// getMinBlockWithinHistoryInterval returns the lowest block number whose timestamp
+// falls within the history drop interval of the latest block.
 func (ix *Indexer[B, T, E]) getMinBlockWithinHistoryInterval(
 	ctx context.Context,
 ) (uint64, error) {

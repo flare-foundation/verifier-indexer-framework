@@ -18,6 +18,7 @@ type BuildConfig struct {
 	BuildDate uint64
 }
 
+// ReadBuildVersion reads the project version, commit hash, and build date from their respective files.
 func ReadBuildVersion() (*BuildConfig, error) {
 	projectVersionBytes, err := os.ReadFile(projectVersionFile)
 	if err != nil {

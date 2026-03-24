@@ -13,15 +13,21 @@ import (
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/indexer"
 )
 
+// CLIArgs holds the command-line arguments for the framework.
 type CLIArgs struct {
 	ConfigFile string `arg:"--config,env:CONFIG_FILE" default:"config.toml"`
 }
 
+// Input provides the user-defined configuration and blockchain client constructor
+// needed to initialize the indexer framework.
 type Input[B database.Block, C config.EnvOverrideable, T database.Transaction, E database.Event] struct {
 	DefaultConfig       C
 	NewBlockchainClient func(C) (indexer.BlockchainClient[B, T, E], error)
 }
 
+// Run parses CLI arguments, loads configuration, connects to the database,
+// and starts the indexer loop. It blocks until the context is cancelled or
+// an error occurs.
 func Run[B database.Block, C config.EnvOverrideable, T database.Transaction, E database.Event](input Input[B, C, T, E]) error {
 	var args CLIArgs
 	arg.MustParse(&args)
@@ -29,6 +35,8 @@ func Run[B database.Block, C config.EnvOverrideable, T database.Transaction, E d
 	return runWithArgs(input, args)
 }
 
+// runWithArgs initializes the full framework stack from the provided input and
+// CLI arguments, then runs the indexer until completion or cancellation.
 func runWithArgs[B database.Block, C config.EnvOverrideable, T database.Transaction, E database.Event](input Input[B, C, T, E], args CLIArgs) error {
 	type Config struct {
 		config.Base
@@ -80,6 +88,7 @@ func runWithArgs[B database.Block, C config.EnvOverrideable, T database.Transact
 	return indexer.Run(ctx)
 }
 
+// saveVersion persists build metadata and blockchain node version to the database.
 func saveVersion[B database.Block, T database.Transaction, E database.Event](
 	ctx context.Context, db *database.DB[B, T, E], blockchain indexer.BlockchainClient[B, T, E], cfg *config.Base,
 ) error {

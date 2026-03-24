@@ -14,14 +14,21 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// BlockchainClient defines the operations the indexer requires from a blockchain node.
 type BlockchainClient[B database.Block, T database.Transaction, E database.Event] interface {
+	// GetLatestBlockInfo returns the number and timestamp of the latest block.
 	GetLatestBlockInfo(context.Context) (*BlockInfo, error)
+	// GetBlockResult returns the full block data for the given block number.
 	GetBlockResult(context.Context, uint64) (*BlockResult[B, T, E], error)
+	// GetBlockTimestamp returns the timestamp for the given block number.
 	GetBlockTimestamp(context.Context, uint64) (uint64, error)
+	// GetServerInfo returns the version string of the blockchain node.
 	GetServerInfo(context.Context) (string, error)
 }
 
+// DB defines the database operations required by the indexer.
 type DB[B database.Block, T database.Transaction, E database.Event] interface {
+	// SaveAllEntities persists blocks, transactions, events, and state atomically.
 	SaveAllEntities(
 		ctx context.Context,
 		blocks []*B,
@@ -29,7 +36,9 @@ type DB[B database.Block, T database.Transaction, E database.Event] interface {
 		events []*E,
 		state *database.State,
 	) error
+	// GetState retrieves the current indexer state.
 	GetState(ctx context.Context) (*database.State, error)
+	// DropHistoryIteration deletes entities older than the given interval.
 	DropHistoryIteration(
 		ctx context.Context,
 		state *database.State,
@@ -37,22 +46,29 @@ type DB[B database.Block, T database.Transaction, E database.Event] interface {
 	) (*database.State, error)
 }
 
+// BlockInfo holds the block number and timestamp for a single block.
 type BlockInfo struct {
 	BlockNumber uint64
 	Timestamp   uint64
 }
 
+// iterationResult holds the block results and updated state produced by a single
+// indexer iteration.
 type iterationResult[B database.Block, T database.Transaction, E database.Event] struct {
 	blockResults []BlockResult[B, T, E]
 	state        *database.State
 }
 
+// BlockResult contains the block, its transactions, and its events as fetched
+// from the blockchain.
 type BlockResult[B database.Block, T database.Transaction, E database.Event] struct {
 	Block        B
 	Transactions []T
 	Events       []E
 }
 
+// New creates an Indexer configured from the provided base configuration,
+// database, and blockchain client.
 func New[B database.Block, T database.Transaction, E database.Event](
 	cfg *config.Base, db DB[B, T, E], blockchain BlockchainClient[B, T, E],
 ) Indexer[B, T, E] {
@@ -79,6 +95,8 @@ func New[B database.Block, T database.Transaction, E database.Event](
 	}
 }
 
+// Indexer continuously fetches blocks from a blockchain and stores them in a
+// database, with support for history pruning and configurable concurrency.
 type Indexer[B database.Block, T database.Transaction, E database.Event] struct {
 	blockchain            BlockchainClient[B, T, E]
 	confirmations         uint64
@@ -93,6 +111,8 @@ type Indexer[B database.Block, T database.Transaction, E database.Event] struct 
 	backoffMaxElapsedTime time.Duration
 }
 
+// Run starts the indexer loop, fetching and persisting blocks until the context
+// is cancelled or the configured end block is reached.
 func (ix *Indexer[B, T, E]) Run(ctx context.Context) error {
 	upToDateBackoff := backoff.NewExponentialBackOff(backoff.WithMaxElapsedTime(0))
 	historyDropResults := make(chan *database.State, 1)
@@ -130,6 +150,8 @@ func (ix *Indexer[B, T, E]) Run(ctx context.Context) error {
 	}
 }
 
+// getInitialStartBlockNumber determines which block to begin indexing from,
+// considering the database state and history drop configuration.
 func (ix *Indexer[B, T, E]) getInitialStartBlockNumber(ctx context.Context, state *database.State) (uint64, error) {
 	// If history drop is disabled: we either start from after the last indexed block, or else we start
 	// from the configured start block number if the DB is empty.
@@ -158,6 +180,9 @@ func (ix *Indexer[B, T, E]) getInitialStartBlockNumber(ctx context.Context, stat
 	return historyDropStartBlock, nil
 }
 
+// runIteration executes a single indexer cycle: updates chain state, checks for
+// history drop results, optionally triggers a new history drop, and fetches and
+// persists any new blocks.
 func (ix *Indexer[B, T, E]) runIteration(
 	ctx context.Context,
 	state *database.State,
@@ -234,6 +259,8 @@ func (ix *Indexer[B, T, E]) runIteration(
 	return state, nil
 }
 
+// maybeRunHistoryDrop starts an asynchronous history drop if one is not already
+// in progress and the configured frequency threshold has been reached.
 func (ix *Indexer[B, T, E]) maybeRunHistoryDrop(
 	ctx context.Context,
 	historyDropLock *sync.Mutex,
@@ -290,6 +317,8 @@ func (ix *Indexer[B, T, E]) maybeRunHistoryDrop(
 	// returned via the results channel.
 }
 
+// pollHistoryDropResults checks for completed history drop results without blocking
+// and applies the updated state if available.
 func (ix *Indexer[B, T, E]) pollHistoryDropResults(
 	historyDropLock *sync.Mutex,
 	historyDropResults chan *database.State,
@@ -321,6 +350,8 @@ func (ix *Indexer[B, T, E]) pollHistoryDropResults(
 	return nil
 }
 
+// getIterationResults determines the next block range to index, fetches the block
+// data concurrently, and returns the results with an updated state.
 func (ix *Indexer[B, T, E]) getIterationResults(
 	ctx context.Context, state *database.State,
 ) (*iterationResult[B, T, E], error) {
@@ -350,11 +381,13 @@ func (ix *Indexer[B, T, E]) getIterationResults(
 	}, nil
 }
 
+// blockRange represents an inclusive-start, exclusive-end range of block numbers.
 type blockRange struct {
 	start uint64
 	end   uint64
 }
 
+// len returns the number of blocks in the range.
 func (br blockRange) len() uint64 {
 	// this should never happen, safety check
 	if br.start > br.end {
@@ -364,6 +397,7 @@ func (br blockRange) len() uint64 {
 	return br.end - br.start
 }
 
+// getBlockRange computes the next range of blocks to index based on the current state.
 func (ix *Indexer[B, T, E]) getBlockRange(state *database.State) *blockRange {
 	result := new(blockRange)
 	result.start = ix.getStartBlock(state)
@@ -372,6 +406,7 @@ func (ix *Indexer[B, T, E]) getBlockRange(state *database.State) *blockRange {
 	return result
 }
 
+// getStartBlock returns the block number to begin indexing from in the current iteration.
 func (ix *Indexer[B, T, E]) getStartBlock(state *database.State) uint64 {
 	if state.LastIndexedBlockNumber < ix.computedStartBlock {
 		return ix.computedStartBlock
@@ -380,6 +415,8 @@ func (ix *Indexer[B, T, E]) getStartBlock(state *database.State) uint64 {
 	return state.LastIndexedBlockNumber + 1
 }
 
+// getEndBlock returns the exclusive upper bound of the block range to index,
+// capped by confirmations and the maximum block range.
 func (ix *Indexer[B, T, E]) getEndBlock(state *database.State, start uint64) uint64 {
 	if state.LastChainBlockNumber < ix.confirmations {
 		return start
@@ -399,6 +436,8 @@ func (ix *Indexer[B, T, E]) getEndBlock(state *database.State, start uint64) uin
 	return latestConfirmedNum + 1
 }
 
+// getBlockResults fetches block data for the given range concurrently, bounded
+// by the configured max concurrency.
 func (ix *Indexer[B, T, E]) getBlockResults(
 	ctx context.Context, blkRange *blockRange,
 ) ([]BlockResult[B, T, E], error) {
@@ -431,11 +470,13 @@ func (ix *Indexer[B, T, E]) getBlockResults(
 	return results, nil
 }
 
+// saveData extracts blocks, transactions, and events from the iteration results
+// and persists them to the database.
 func (ix *Indexer[B, T, E]) saveData(ctx context.Context, results *iterationResult[B, T, E]) error {
 	blocks := make([]*B, len(results.blockResults))
 	totalTxs := 0
 	totalEvents := 0
-	for i, _ := range results.blockResults {
+	for i := range results.blockResults {
 		totalTxs += len(results.blockResults[i].Transactions)
 		totalEvents += len(results.blockResults[i].Events)
 	}
@@ -468,6 +509,8 @@ func (ix *Indexer[B, T, E]) saveData(ctx context.Context, results *iterationResu
 	return nil
 }
 
+// updateChainState fetches the latest block info from the chain and returns
+// an updated state with the current chain head.
 func (ix *Indexer[B, T, E]) updateChainState(ctx context.Context, state *database.State) (*database.State, error) {
 	newState := *state
 	newState.LastChainBlockUpdated = uint64(time.Now().Unix())
@@ -483,10 +526,13 @@ func (ix *Indexer[B, T, E]) updateChainState(ctx context.Context, state *databas
 	return &newState, nil
 }
 
+// newBackoff creates a new exponential backoff with the indexer's configured max elapsed time.
 func (ix *Indexer[B, T, E]) newBackoff() backoff.BackOff {
 	return backoff.NewExponentialBackOff(backoff.WithMaxElapsedTime(ix.backoffMaxElapsedTime))
 }
 
+// updateState returns a new State reflecting the last and first indexed blocks
+// from the given results.
 func updateState[B database.Block, T database.Transaction, E database.Event](
 	results []BlockResult[B, T, E], state *database.State,
 ) *database.State {

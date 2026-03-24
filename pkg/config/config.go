@@ -76,6 +76,7 @@ var defaultIndexer = Indexer{
 	MaxConcurrency: 8,
 }
 
+// ReadFile decodes a TOML configuration file at the given filepath into cfg.
 func ReadFile[T any](filepath string, cfg T) error {
 	_, err := toml.DecodeFile(filepath, cfg)
 	return err
@@ -85,6 +86,7 @@ type EnvOverrideable interface {
 	ApplyEnvOverrides()
 }
 
+// ApplyEnvOverrides overrides database connection fields in Base with values from environment variables.
 func (cfg *Base) ApplyEnvOverrides() {
 	var envCfg envCfg
 	if err := env.Parse(&envCfg); err != nil {
@@ -113,6 +115,7 @@ func (cfg *Base) ApplyEnvOverrides() {
 	}
 }
 
+// CheckParameters validates that required configuration fields in Base have acceptable values.
 func CheckParameters(cfg *Base) error {
 	if cfg.Indexer.Confirmations == 0 {
 		return errors.New("number of confirmations should be set to a positive integer")

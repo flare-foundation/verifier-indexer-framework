@@ -10,12 +10,16 @@ import (
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/database"
 )
 
+// blockchainWithBackoff wraps a BlockchainClient and retries each call with
+// exponential backoff on transient failures.
 type blockchainWithBackoff[B database.Block, T database.Transaction, E database.Event] struct {
 	client         BlockchainClient[B, T, E]
 	maxElapsedTime time.Duration
 	requestTimeout time.Duration
 }
 
+// newBlockchainWithBackoff returns a blockchainWithBackoff that wraps the given
+// client with the specified backoff and request timeout durations.
 func newBlockchainWithBackoff[B database.Block, T database.Transaction, E database.Event](
 	client BlockchainClient[B, T, E], maxElapsedTime, requestTimeout time.Duration,
 ) *blockchainWithBackoff[B, T, E] {
@@ -26,6 +30,8 @@ func newBlockchainWithBackoff[B database.Block, T database.Transaction, E databa
 	}
 }
 
+// retryWithBackoff executes the given operation with exponential backoff, applying
+// a per-request timeout on each attempt.
 func retryWithBackoff[B database.Block, T database.Transaction, E database.Event, R any](
 	ctx context.Context,
 	bwb *blockchainWithBackoff[B, T, E],
@@ -54,28 +60,33 @@ func retryWithBackoff[B database.Block, T database.Transaction, E database.Event
 	return result, nil
 }
 
+// GetLatestBlockInfo retrieves the latest block info from the blockchain with retry.
 func (bwb *blockchainWithBackoff[B, T, E]) GetLatestBlockInfo(ctx context.Context) (*BlockInfo, error) {
 	return retryWithBackoff[B, T, E](ctx, bwb, "GetLatestBlockInfo", bwb.client.GetLatestBlockInfo)
 }
 
+// GetBlockResult retrieves the block result for the given block number with retry.
 func (bwb *blockchainWithBackoff[B, T, E]) GetBlockResult(ctx context.Context, blockNumber uint64) (*BlockResult[B, T, E], error) {
 	return retryWithBackoff[B, T, E](ctx, bwb, "GetBlockResult", func(ctx context.Context) (*BlockResult[B, T, E], error) {
 		return bwb.client.GetBlockResult(ctx, blockNumber)
 	})
 }
 
+// GetBlockTimestamp retrieves the timestamp for the given block number with retry.
 func (bwb *blockchainWithBackoff[B, T, E]) GetBlockTimestamp(ctx context.Context, blockNumber uint64) (uint64, error) {
 	return retryWithBackoff[B, T, E](ctx, bwb, "GetBlockTimestamp", func(ctx context.Context) (uint64, error) {
 		return bwb.client.GetBlockTimestamp(ctx, blockNumber)
 	})
 }
 
+// GetServerInfo retrieves the server version string from the blockchain node with retry.
 func (bwb *blockchainWithBackoff[B, T, E]) GetServerInfo(ctx context.Context) (string, error) {
 	return retryWithBackoff[B, T, E](ctx, bwb, "GetServerInfo", func(ctx context.Context) (string, error) {
 		return bwb.client.GetServerInfo(ctx)
 	})
 }
 
+// newBackoff creates a new context-aware exponential backoff with the configured max elapsed time.
 func (bwb *blockchainWithBackoff[B, T, E]) newBackoff(ctx context.Context) backoff.BackOff {
 	return backoff.WithContext(backoff.NewExponentialBackOff(
 		backoff.WithMaxElapsedTime(bwb.maxElapsedTime),

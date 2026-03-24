@@ -15,6 +15,8 @@ import (
 // timeouts.
 const deleteBatchSize = 1000
 
+// DropHistoryIteration deletes blocks and related entities older than the given
+// interval and updates the state to reflect the new first indexed block.
 func (db *DB[B, T, E]) DropHistoryIteration(
 	ctx context.Context,
 	state *State,
@@ -59,12 +61,16 @@ func (db *DB[B, T, E]) DropHistoryIteration(
 	return &newState, nil
 }
 
+// Deletable is implemented by entities that support timestamp-based history pruning.
 type Deletable interface {
+	// TimestampField returns the database column name used for timestamp-based deletion.
 	TimestampField() string
 }
 
 var validColumnName = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
+// deleteInBatches removes rows from the entity's table where the timestamp column
+// is older than deleteStart, processing up to deleteBatchSize rows per transaction.
 func deleteInBatches(ctx context.Context, db *gorm.DB, deleteStart uint64, entity Deletable) error {
 	col := entity.TimestampField()
 	if !validColumnName.MatchString(col) {
