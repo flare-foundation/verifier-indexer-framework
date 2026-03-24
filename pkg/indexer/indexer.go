@@ -54,7 +54,7 @@ type BlockResult[B database.Block, T database.Transaction, E database.Event] str
 }
 
 func New[B database.Block, T database.Transaction, E database.Event](
-	cfg *config.BaseConfig, db DB[B, T, E], blockchain BlockchainClient[B, T, E],
+	cfg *config.Base, db DB[B, T, E], blockchain BlockchainClient[B, T, E],
 ) Indexer[B, T, E] {
 	backoffMaxElapsedTime := time.Duration(cfg.Timeout.BackoffMaxElapsedTimeSeconds) * time.Second
 	historyDropFrequency := cfg.DB.HistoryDropFrequency
@@ -64,7 +64,8 @@ func New[B database.Block, T database.Transaction, E database.Event](
 
 	return Indexer[B, T, E]{
 		blockchain: newBlockchainWithBackoff(
-			blockchain, backoffMaxElapsedTime, time.Duration(cfg.Timeout.RequestTimeoutMillis)*time.Millisecond,
+			blockchain, backoffMaxElapsedTime,
+			time.Duration(cfg.Timeout.RequestTimeoutMillis)*time.Millisecond,
 		),
 		confirmations:         cfg.Indexer.Confirmations,
 		db:                    db,
@@ -330,16 +331,10 @@ func (ix *Indexer[B, T, E]) getIterationResults(
 		return nil, nil
 
 	case 1:
-		logger.Debugf(
-			"indexing block %d, latest block on chain %d",
-			blkRange.start, state.LastChainBlockNumber,
-		)
+		logger.Debugf("indexing block %d, latest block on chain %d", blkRange.start, state.LastChainBlockNumber)
 
 	default:
-		logger.Debugf(
-			"indexing from block %d to %d, latest block on chain %d",
-			blkRange.start, blkRange.end-1, state.LastChainBlockNumber,
-		)
+		logger.Debugf("indexing from block %d to %d, latest block on chain %d", blkRange.start, blkRange.end-1, state.LastChainBlockNumber)
 	}
 
 	blockResults, err := ix.getBlockResults(ctx, blkRange)
@@ -440,9 +435,9 @@ func (ix *Indexer[B, T, E]) saveData(ctx context.Context, results *iterationResu
 	blocks := make([]*B, len(results.blockResults))
 	totalTxs := 0
 	totalEvents := 0
-	for _, br := range results.blockResults {
-		totalTxs += len(br.Transactions)
-		totalEvents += len(br.Events)
+	for i, _ := range results.blockResults {
+		totalTxs += len(results.blockResults[i].Transactions)
+		totalEvents += len(results.blockResults[i].Events)
 	}
 	transactions := make([]*T, 0, totalTxs)
 	events := make([]*E, 0, totalEvents)

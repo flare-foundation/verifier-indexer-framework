@@ -7,6 +7,7 @@ import (
 
 	"github.com/alexflint/go-arg"
 	"github.com/flare-foundation/go-flare-common/pkg/logger"
+
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/config"
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/database"
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/indexer"
@@ -30,14 +31,15 @@ func Run[B database.Block, C config.EnvOverrideable, T database.Transaction, E d
 
 func runWithArgs[B database.Block, C config.EnvOverrideable, T database.Transaction, E database.Event](input Input[B, C, T, E], args CLIArgs) error {
 	type Config struct {
-		config.BaseConfig
+		config.Base
 		Blockchain C
 	}
 
 	cfg := Config{
-		BaseConfig: config.DefaultBaseConfig,
+		Base:       config.DefaultBase,
 		Blockchain: input.DefaultConfig,
 	}
+
 	if err := config.ReadFile(args.ConfigFile, &cfg); err != nil {
 		return err
 	}
@@ -45,7 +47,7 @@ func runWithArgs[B database.Block, C config.EnvOverrideable, T database.Transact
 	cfg.ApplyEnvOverrides()
 	cfg.Blockchain.ApplyEnvOverrides()
 
-	if err := config.CheckParameters(&cfg.BaseConfig); err != nil {
+	if err := config.CheckParameters(&cfg.Base); err != nil {
 		return err
 	}
 
@@ -68,18 +70,18 @@ func runWithArgs[B database.Block, C config.EnvOverrideable, T database.Transact
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	err = saveVersion(ctx, db, bc, &cfg.BaseConfig)
+	err = saveVersion(ctx, db, bc, &cfg.Base)
 	if err != nil {
 		return err
 	}
 
-	indexer := indexer.New(&cfg.BaseConfig, db, bc)
+	indexer := indexer.New(&cfg.Base, db, bc)
 
 	return indexer.Run(ctx)
 }
 
 func saveVersion[B database.Block, T database.Transaction, E database.Event](
-	ctx context.Context, db *database.DB[B, T, E], blockchain indexer.BlockchainClient[B, T, E], cfg *config.BaseConfig,
+	ctx context.Context, db *database.DB[B, T, E], blockchain indexer.BlockchainClient[B, T, E], cfg *config.Base,
 ) error {
 	version := database.InitVersion()
 	version.NumConfirmations = cfg.Indexer.Confirmations

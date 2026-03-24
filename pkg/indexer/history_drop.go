@@ -58,8 +58,11 @@ func (ix *Indexer[B, T, E]) getMinBlockWithinHistoryInterval(
 	}
 
 	return ix.binarySearchBlockByTime(
-		ctx, ix.startBlockNumber, latestBlock.BlockNumber,
-		latestBlock.Timestamp, ix.historyDropInterval,
+		ctx,
+		ix.startBlockNumber,
+		latestBlock.BlockNumber,
+		latestBlock.Timestamp,
+		ix.historyDropInterval,
 	)
 }
 

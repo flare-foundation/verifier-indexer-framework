@@ -91,7 +91,7 @@ func (m mockBlockchain) GetServerInfo(context.Context) (string, error) {
 }
 
 func TestIndexer(t *testing.T) {
-	cfg := config.BaseConfig{
+	cfg := config.Base{
 		Indexer: config.Indexer{
 			Confirmations:  1,
 			MaxBlockRange:  10,

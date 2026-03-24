@@ -8,7 +8,7 @@ import (
 	"github.com/flare-foundation/go-flare-common/pkg/logger"
 )
 
-type envConfig struct {
+type envCfg struct {
 	DBHost     string `env:"DB_HOST"`
 	DBPort     int    `env:"DB_PORT"`
 	DBUsername string `env:"DB_USERNAME"`
@@ -16,14 +16,14 @@ type envConfig struct {
 	DBName     string `env:"DB_NAME"`
 }
 
-type BaseConfig struct {
+type Base struct {
 	DB      DB            `toml:"db"`
 	Indexer Indexer       `toml:"indexer"`
 	Timeout TimeoutConfig `toml:"timeout"`
 	Logger  logger.Config `toml:"logger"`
 }
 
-var DefaultBaseConfig = BaseConfig{
+var DefaultBase = Base{
 	DB:      defaultDB,
 	Indexer: defaultIndexer,
 	Timeout: defaultTimeout,
@@ -76,7 +76,7 @@ var defaultIndexer = Indexer{
 	MaxConcurrency: 8,
 }
 
-func ReadFile(filepath string, cfg any) error {
+func ReadFile[T any](filepath string, cfg T) error {
 	_, err := toml.DecodeFile(filepath, cfg)
 	return err
 }
@@ -85,8 +85,8 @@ type EnvOverrideable interface {
 	ApplyEnvOverrides()
 }
 
-func (cfg *BaseConfig) ApplyEnvOverrides() {
-	var envCfg envConfig
+func (cfg *Base) ApplyEnvOverrides() {
+	var envCfg envCfg
 	if err := env.Parse(&envCfg); err != nil {
 		logger.Errorf("failed to parse environment variables for config overrides: %v", err)
 		return
@@ -113,7 +113,7 @@ func (cfg *BaseConfig) ApplyEnvOverrides() {
 	}
 }
 
-func CheckParameters(cfg *BaseConfig) error {
+func CheckParameters(cfg *Base) error {
 	if cfg.Indexer.Confirmations == 0 {
 		return errors.New("number of confirmations should be set to a positive integer")
 	}
