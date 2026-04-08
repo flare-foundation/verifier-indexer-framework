@@ -2,19 +2,20 @@ package indexer
 
 import (
 	"context"
-	"sort"
+	"fmt"
 
-	"github.com/flare-foundation/go-flare-common/pkg/logger"
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/database"
 )
 
+// shouldRunHistoryDrop reports whether enough time has elapsed since the last
+// history drop to warrant running another one.
 func (ix *Indexer[B, T, E]) shouldRunHistoryDrop(state *database.State) bool {
 	if ix.historyDropInterval == 0 || state.LastChainBlockTimestamp < state.LastHistoryDrop {
 		return false
 	}
 
 	if state.LastChainBlockTimestamp-state.LastHistoryDrop >= ix.historyDropFrequency {
-		logger.Debugf(
+		ix.log.Debugf(
 			"history drop should run: last drop %d, last block %d, frequency %d",
 			state.LastHistoryDrop, state.LastChainBlockTimestamp, ix.historyDropFrequency,
 		)
@@ -25,30 +26,35 @@ func (ix *Indexer[B, T, E]) shouldRunHistoryDrop(state *database.State) bool {
 	return false
 }
 
+// runHistoryDrop executes a single history drop iteration, deleting blocks older
+// than the configured interval.
 func (ix *Indexer[B, T, E]) runHistoryDrop(
 	ctx context.Context, state *database.State,
 ) (*database.State, error) {
-	logger.Debugf("running history drop")
+	ix.log.Debugf("running history drop")
 
 	return ix.db.DropHistoryIteration(
 		ctx, state, ix.historyDropInterval, state.LastChainBlockTimestamp,
 	)
 }
 
+// getMinBlockWithinHistoryInterval returns the lowest block number whose timestamp
+// falls within the history drop interval of the latest block.
 func (ix *Indexer[B, T, E]) getMinBlockWithinHistoryInterval(
 	ctx context.Context,
 ) (uint64, error) {
 	firstBlockTime, err := ix.blockchain.GetBlockTimestamp(ctx, ix.startBlockNumber)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("failed to get timestamp for start block %d: %w", ix.startBlockNumber, err)
 	}
 
 	latestBlock, err := ix.blockchain.GetLatestBlockInfo(ctx)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("failed to get latest block info: %w", err)
 	}
 
-	if latestBlock.Timestamp-firstBlockTime < ix.historyDropInterval {
+	if latestBlock.Timestamp <= firstBlockTime ||
+		latestBlock.Timestamp-firstBlockTime < ix.historyDropInterval {
 		return ix.startBlockNumber, nil
 	}
 
@@ -56,33 +62,39 @@ func (ix *Indexer[B, T, E]) getMinBlockWithinHistoryInterval(
 		return ix.startBlockNumber, nil
 	}
 
-	// find the first block within the history drop interval using binary search
-	i := sort.Search(int(latestBlock.BlockNumber-ix.startBlockNumber), func(i int) bool {
-		// The err variable comes from the enclosing function. If it has been
-		// set to a non-nil value by a previous iteration of the binary search,
-		// we should not overwrite it. Ideally we would exit the binary search
-		// early, but the sort.Search function does not provide a way to do
-		// that. So instead, we just return false for all future iterations.
-		// The results of the search are meaningless in this case.
+	return ix.binarySearchBlockByTime(
+		ctx,
+		ix.startBlockNumber,
+		latestBlock.BlockNumber,
+		latestBlock.Timestamp,
+		ix.historyDropInterval,
+	)
+}
+
+// binarySearchBlockByTime finds the first block whose timestamp is within
+// the given interval of the latest block's timestamp.
+func (ix *Indexer[B, T, E]) binarySearchBlockByTime(
+	ctx context.Context,
+	low, high, latestTimestamp, interval uint64,
+) (uint64, error) {
+	result := low
+	for low <= high {
+		mid := low + (high-low)/2
+
+		blockTime, err := ix.blockchain.GetBlockTimestamp(ctx, mid)
 		if err != nil {
-			return false
+			return 0, fmt.Errorf("failed to get block timestamp for block %d during binary search: %w", mid, err)
 		}
 
-		blockNumber := ix.startBlockNumber + uint64(i)
-
-		var blockTime uint64
-		blockTime, err = ix.blockchain.GetBlockTimestamp(ctx, blockNumber)
-		if err != nil {
-			return false
+		if latestTimestamp >= blockTime && latestTimestamp-blockTime <= interval {
+			result = mid
+			if mid == low {
+				break
+			}
+			high = mid - 1
+		} else {
+			low = mid + 1
 		}
-
-		return latestBlock.Timestamp-blockTime <= ix.historyDropInterval
-	})
-
-	// If there was any error during the binary search, return it.
-	if err != nil {
-		return 0, err
 	}
-
-	return ix.startBlockNumber + uint64(i), nil
+	return result, nil
 }

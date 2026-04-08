@@ -1,13 +1,15 @@
 package config
 
 import (
+	"errors"
+	"fmt"
+
 	"github.com/BurntSushi/toml"
 	"github.com/caarlos0/env/v11"
 	"github.com/flare-foundation/go-flare-common/pkg/logger"
-	"github.com/pkg/errors"
 )
 
-type envConfig struct {
+type envCfg struct {
 	DBHost     string `env:"DB_HOST"`
 	DBPort     int    `env:"DB_PORT"`
 	DBUsername string `env:"DB_USERNAME"`
@@ -15,14 +17,14 @@ type envConfig struct {
 	DBName     string `env:"DB_NAME"`
 }
 
-type BaseConfig struct {
+type Base struct {
 	DB      DB            `toml:"db"`
 	Indexer Indexer       `toml:"indexer"`
 	Timeout TimeoutConfig `toml:"timeout"`
 	Logger  logger.Config `toml:"logger"`
 }
 
-var DefaultBaseConfig = BaseConfig{
+var DefaultBase = Base{
 	DB:      defaultDB,
 	Indexer: defaultIndexer,
 	Timeout: defaultTimeout,
@@ -30,20 +32,26 @@ var DefaultBaseConfig = BaseConfig{
 }
 
 type DB struct {
-	Host                 string `toml:"host"`
-	Port                 int    `toml:"port"`
-	Username             string `toml:"username"`
-	Password             string `toml:"password"`
-	DBName               string `toml:"db_name"`
-	LogQueries           bool   `toml:"log_queries"`
-	DropTableAtStart     bool   `toml:"drop_table_at_start"`
-	HistoryDrop          uint64 `toml:"history_drop"`
-	HistoryDropFrequency uint64 `toml:"history_drop_frequency"`
+	Host                   string `toml:"host"`
+	Port                   int    `toml:"port"`
+	Username               string `toml:"username"`
+	Password               string `toml:"password"`
+	DBName                 string `toml:"db_name"`
+	MaxOpenConns           int    `toml:"max_open_conns"`
+	MaxIdleConns           int    `toml:"max_idle_conns"`
+	ConnMaxLifetimeSeconds int    `toml:"conn_max_lifetime_seconds"`
+	LogQueries             bool   `toml:"log_queries"`
+	DropTableAtStart       bool   `toml:"drop_table_at_start"`
+	HistoryDrop            uint64 `toml:"history_drop"`
+	HistoryDropFrequency   uint64 `toml:"history_drop_frequency"`
 }
 
 var defaultDB = DB{
-	Host: "localhost",
-	Port: 5432,
+	Host:                   "localhost",
+	Port:                   5432,
+	MaxOpenConns:           25,
+	MaxIdleConns:           5,
+	ConnMaxLifetimeSeconds: 300,
 }
 
 type TimeoutConfig struct {
@@ -69,20 +77,23 @@ var defaultIndexer = Indexer{
 	MaxConcurrency: 8,
 }
 
-func ReadFile(filepath string, cfg any) error {
+// ReadFile decodes a TOML configuration file at the given filepath into cfg.
+func ReadFile[T any](filepath string, cfg T) error {
 	_, err := toml.DecodeFile(filepath, cfg)
 	return err
 }
 
+// EnvOverrideable is implemented by configuration types that support overriding
+// fields from environment variables.
 type EnvOverrideable interface {
-	ApplyEnvOverrides()
+	ApplyEnvOverrides() error
 }
 
-func (cfg *BaseConfig) ApplyEnvOverrides() {
-	var envCfg envConfig
+// ApplyEnvOverrides overrides database connection fields in Base with values from environment variables.
+func (cfg *Base) ApplyEnvOverrides() error {
+	var envCfg envCfg
 	if err := env.Parse(&envCfg); err != nil {
-		logger.Error("failed to parse environment variables for config overrides: %v", err)
-		return
+		return fmt.Errorf("failed to parse environment variables for config overrides: %w", err)
 	}
 
 	if envCfg.DBHost != "" {
@@ -104,11 +115,34 @@ func (cfg *BaseConfig) ApplyEnvOverrides() {
 	if envCfg.DBName != "" {
 		cfg.DB.DBName = envCfg.DBName
 	}
+
+	return nil
 }
 
-func CheckParameters(cfg *BaseConfig) error {
+// CheckParameters validates that required configuration fields in Base have acceptable values.
+func CheckParameters(cfg *Base) error {
 	if cfg.Indexer.Confirmations == 0 {
 		return errors.New("number of confirmations should be set to a positive integer")
+	}
+
+	if cfg.Indexer.MaxConcurrency <= 0 {
+		return errors.New("max_concurrency must be a positive integer")
+	}
+
+	if cfg.Indexer.MaxBlockRange == 0 {
+		return errors.New("max_block_range must be a positive integer")
+	}
+
+	if cfg.Timeout.RequestTimeoutMillis <= 0 {
+		return errors.New("request_timeout_millis must be a positive integer")
+	}
+
+	if cfg.Timeout.BackoffMaxElapsedTimeSeconds <= 0 {
+		return errors.New("backoff_max_elapsed_time_seconds must be a positive integer")
+	}
+
+	if cfg.Indexer.EndBlockNumber != 0 && cfg.Indexer.EndBlockNumber < cfg.Indexer.StartBlockNumber {
+		return errors.New("end_block_number must be greater than or equal to start_block_number")
 	}
 
 	return nil

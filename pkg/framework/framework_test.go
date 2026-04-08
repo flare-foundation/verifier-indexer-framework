@@ -39,11 +39,12 @@ func TestRun(t *testing.T) {
 	err = runWithArgs(input, args)
 	require.NoError(t, err)
 
-	cfg := config.BaseConfig{}
+	cfg := config.Base{}
 	err = config.ReadFile(configFile, &cfg)
 	require.NoError(t, err)
 
-	cfg.ApplyEnvOverrides()
+	err = cfg.ApplyEnvOverrides()
+	require.NoError(t, err)
 
 	t.Log("Applied env overrides to config: ", cfg)
 
@@ -99,7 +100,7 @@ func (e TestBlockchain) GetServerInfo(ctx context.Context) (string, error) {
 type ExampleConfig struct{}
 
 // Required for interface but not used in this example
-func (e *ExampleConfig) ApplyEnvOverrides() {}
+func (e *ExampleConfig) ApplyEnvOverrides() error { return nil }
 
 type dbBlock struct {
 	Hash        string `gorm:"primaryKey;type:varchar(64)"`

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -18,6 +19,7 @@ type BuildConfig struct {
 	BuildDate uint64
 }
 
+// ReadBuildVersion reads the project version, commit hash, and build date from their respective files.
 func ReadBuildVersion() (*BuildConfig, error) {
 	projectVersionBytes, err := os.ReadFile(projectVersionFile)
 	if err != nil {
@@ -34,7 +36,7 @@ func ReadBuildVersion() (*BuildConfig, error) {
 	}
 	buildDate, err := time.Parse(time.RFC3339, strings.TrimSpace(string(projectBuildDateBytes)))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse build date: %w", err)
 	}
 
 	return &BuildConfig{

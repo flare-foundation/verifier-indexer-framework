@@ -2,13 +2,14 @@ package indexer
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/config"
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/database"
-	"github.com/pkg/errors"
+	"github.com/flare-foundation/verifier-indexer-framework/pkg/logger"
 	"github.com/stretchr/testify/require"
 )
 
@@ -91,7 +92,7 @@ func (m mockBlockchain) GetServerInfo(context.Context) (string, error) {
 }
 
 func TestIndexer(t *testing.T) {
-	cfg := config.BaseConfig{
+	cfg := config.Base{
 		Indexer: config.Indexer{
 			Confirmations:  1,
 			MaxBlockRange:  10,
@@ -102,7 +103,7 @@ func TestIndexer(t *testing.T) {
 	db := &mockDB{}
 	chain := &mockBlockchain{}
 
-	indexer := New(&cfg, db, chain)
+	indexer := New(&cfg, db, chain, logger.Nop{})
 	require.NotNil(t, indexer)
 
 	require.Equal(t, uint64(1), indexer.confirmations)
@@ -114,7 +115,7 @@ func TestIndexer(t *testing.T) {
 
 	var historyDropLock sync.Mutex
 	historyDropResults := make(chan *database.State, 1)
-	upToDateBackoff := backoff.NewExponentialBackOff()
+	upToDateBackoff := backoff.NewExponentialBackOff(backoff.WithMaxElapsedTime(0))
 
 	state, err := indexer.runIteration(ctx, state, &historyDropLock, historyDropResults, upToDateBackoff)
 	require.NoError(t, err)
@@ -138,7 +139,7 @@ func TestGetInitialStartBlockNumber(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("returns zero when no previous state exists", func(t *testing.T) {
-		ix := Indexer[dbBlock, dbTransaction, struct{}]{}
+		ix := Indexer[dbBlock, dbTransaction, struct{}]{log: logger.Nop{}}
 		var state database.State
 
 		startBlock, err := ix.getInitialStartBlockNumber(ctx, &state)
@@ -147,11 +148,338 @@ func TestGetInitialStartBlockNumber(t *testing.T) {
 	})
 
 	t.Run("returns last processed block number plus one when previous state exists", func(t *testing.T) {
-		ix := Indexer[dbBlock, dbTransaction, struct{}]{}
+		ix := Indexer[dbBlock, dbTransaction, struct{}]{log: logger.Nop{}}
 		state := database.State{LastIndexedBlockNumber: 42}
 
 		startBlock, err := ix.getInitialStartBlockNumber(ctx, &state)
 		require.NoError(t, err)
 		require.Equal(t, uint64(43), startBlock)
 	})
+
+	t.Run("uses configured start block on fresh database", func(t *testing.T) {
+		ix := Indexer[dbBlock, dbTransaction, struct{}]{
+			startBlockNumber: 500,
+			log:              logger.Nop{},
+		}
+		var state database.State
+
+		startBlock, err := ix.getInitialStartBlockNumber(ctx, &state)
+		require.NoError(t, err)
+		require.Equal(t, uint64(500), startBlock)
+	})
+}
+
+func TestGetEndBlock(t *testing.T) {
+	tests := []struct {
+		name          string
+		chainBlock    uint64
+		confirmations uint64
+		start         uint64
+		maxBlockRange uint64
+		expectedEnd   uint64
+	}{
+		{
+			name:          "chain tip below confirmations",
+			chainBlock:    5,
+			confirmations: 10,
+			start:         0,
+			maxBlockRange: 100,
+			expectedEnd:   0,
+		},
+		{
+			name:          "confirmed block behind start",
+			chainBlock:    100,
+			confirmations: 5,
+			start:         96,
+			maxBlockRange: 100,
+			expectedEnd:   96,
+		},
+		{
+			name:          "normal range within max",
+			chainBlock:    200,
+			confirmations: 5,
+			start:         100,
+			maxBlockRange: 1000,
+			expectedEnd:   196,
+		},
+		{
+			name:          "range capped by max block range",
+			chainBlock:    2000,
+			confirmations: 5,
+			start:         100,
+			maxBlockRange: 50,
+			expectedEnd:   150,
+		},
+		{
+			name:          "single block range",
+			chainBlock:    101,
+			confirmations: 1,
+			start:         100,
+			maxBlockRange: 1000,
+			expectedEnd:   101,
+		},
+		{
+			name:          "zero confirmations equivalent",
+			chainBlock:    100,
+			confirmations: 0,
+			start:         50,
+			maxBlockRange: 1000,
+			expectedEnd:   101,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ix := Indexer[dbBlock, dbTransaction, struct{}]{
+				confirmations: tc.confirmations,
+				maxBlockRange: tc.maxBlockRange,
+				log:           logger.Nop{},
+			}
+			state := &database.State{
+				LastChainBlockNumber: tc.chainBlock,
+			}
+
+			result := ix.getEndBlock(state, tc.start)
+			require.Equal(t, tc.expectedEnd, result)
+		})
+	}
+}
+
+func TestGetStartBlock(t *testing.T) {
+	t.Run("returns computed start when ahead of last indexed", func(t *testing.T) {
+		ix := Indexer[dbBlock, dbTransaction, struct{}]{
+			computedStartBlock: 100,
+			log:                logger.Nop{},
+		}
+		state := &database.State{LastIndexedBlockNumber: 50}
+
+		require.Equal(t, uint64(100), ix.getStartBlock(state))
+	})
+
+	t.Run("returns last indexed plus one when caught up", func(t *testing.T) {
+		ix := Indexer[dbBlock, dbTransaction, struct{}]{
+			computedStartBlock: 100,
+			log:                logger.Nop{},
+		}
+		state := &database.State{LastIndexedBlockNumber: 200}
+
+		require.Equal(t, uint64(201), ix.getStartBlock(state))
+	})
+
+	t.Run("returns last indexed plus one when equal to computed start", func(t *testing.T) {
+		ix := Indexer[dbBlock, dbTransaction, struct{}]{
+			computedStartBlock: 100,
+			log:                logger.Nop{},
+		}
+		state := &database.State{LastIndexedBlockNumber: 100}
+
+		require.Equal(t, uint64(101), ix.getStartBlock(state))
+	})
+}
+
+func TestBlockRangeLen(t *testing.T) {
+	t.Run("normal range", func(t *testing.T) {
+		br := blockRange{start: 10, end: 20}
+		require.Equal(t, uint64(10), br.len())
+	})
+
+	t.Run("empty range", func(t *testing.T) {
+		br := blockRange{start: 10, end: 10}
+		require.Equal(t, uint64(0), br.len())
+	})
+
+	t.Run("start exceeds end returns zero", func(t *testing.T) {
+		br := blockRange{start: 20, end: 10}
+		require.Equal(t, uint64(0), br.len())
+	})
+
+	t.Run("single block range", func(t *testing.T) {
+		br := blockRange{start: 5, end: 6}
+		require.Equal(t, uint64(1), br.len())
+	})
+}
+
+func TestUpdateState(t *testing.T) {
+	t.Run("empty results returns original state", func(t *testing.T) {
+		state := &database.State{LastIndexedBlockNumber: 50}
+		result := updateState[dbBlock, dbTransaction, struct{}](nil, state)
+		require.Equal(t, state, result)
+	})
+
+	t.Run("updates last indexed block", func(t *testing.T) {
+		state := &database.State{
+			LastIndexedBlockNumber:     50,
+			FirstIndexedBlockNumber:    10,
+			FirstIndexedBlockTimestamp: 10000,
+		}
+		results := []BlockResult[dbBlock, dbTransaction, struct{}]{
+			{Block: dbBlock{BlockNumber: 51, Timestamp: 51000}},
+			{Block: dbBlock{BlockNumber: 52, Timestamp: 52000}},
+		}
+
+		newState := updateState(results, state)
+		require.Equal(t, uint64(52), newState.LastIndexedBlockNumber)
+		require.Equal(t, uint64(52000), newState.LastIndexedBlockTimestamp)
+		// First indexed should not change after first iteration
+		require.Equal(t, uint64(10), newState.FirstIndexedBlockNumber)
+	})
+
+	t.Run("sets first indexed block on first iteration", func(t *testing.T) {
+		state := &database.State{
+			LastIndexedBlockNumber: 0,
+		}
+		results := []BlockResult[dbBlock, dbTransaction, struct{}]{
+			{Block: dbBlock{BlockNumber: 100, Timestamp: 100000}},
+			{Block: dbBlock{BlockNumber: 101, Timestamp: 101000}},
+		}
+
+		newState := updateState(results, state)
+		require.Equal(t, uint64(100), newState.FirstIndexedBlockNumber)
+		require.Equal(t, uint64(100000), newState.FirstIndexedBlockTimestamp)
+		require.Equal(t, uint64(101), newState.LastIndexedBlockNumber)
+		require.Equal(t, uint64(101000), newState.LastIndexedBlockTimestamp)
+	})
+
+	t.Run("does not modify original state", func(t *testing.T) {
+		state := &database.State{LastIndexedBlockNumber: 50}
+		results := []BlockResult[dbBlock, dbTransaction, struct{}]{
+			{Block: dbBlock{BlockNumber: 51, Timestamp: 51000}},
+		}
+
+		newState := updateState(results, state)
+		require.Equal(t, uint64(50), state.LastIndexedBlockNumber)
+		require.Equal(t, uint64(51), newState.LastIndexedBlockNumber)
+	})
+}
+
+func TestShouldRunHistoryDrop(t *testing.T) {
+	t.Run("disabled when interval is zero", func(t *testing.T) {
+		ix := Indexer[dbBlock, dbTransaction, struct{}]{
+			historyDropInterval: 0,
+			log:                 logger.Nop{},
+		}
+		state := &database.State{LastChainBlockTimestamp: 1000, LastHistoryDrop: 0}
+		require.False(t, ix.shouldRunHistoryDrop(state))
+	})
+
+	t.Run("skips when chain timestamp behind last drop", func(t *testing.T) {
+		ix := Indexer[dbBlock, dbTransaction, struct{}]{
+			historyDropInterval:  100,
+			historyDropFrequency: 100,
+			log:                  logger.Nop{},
+		}
+		state := &database.State{LastChainBlockTimestamp: 50, LastHistoryDrop: 100}
+		require.False(t, ix.shouldRunHistoryDrop(state))
+	})
+
+	t.Run("skips when not enough time elapsed", func(t *testing.T) {
+		ix := Indexer[dbBlock, dbTransaction, struct{}]{
+			historyDropInterval:  100,
+			historyDropFrequency: 100,
+			log:                  logger.Nop{},
+		}
+		state := &database.State{LastChainBlockTimestamp: 150, LastHistoryDrop: 100}
+		require.False(t, ix.shouldRunHistoryDrop(state))
+	})
+
+	t.Run("runs when frequency threshold reached", func(t *testing.T) {
+		ix := Indexer[dbBlock, dbTransaction, struct{}]{
+			historyDropInterval:  100,
+			historyDropFrequency: 100,
+			log:                  logger.Nop{},
+		}
+		state := &database.State{LastChainBlockTimestamp: 200, LastHistoryDrop: 100}
+		require.True(t, ix.shouldRunHistoryDrop(state))
+	})
+
+	t.Run("runs on first drop when last drop is zero", func(t *testing.T) {
+		ix := Indexer[dbBlock, dbTransaction, struct{}]{
+			historyDropInterval:  100,
+			historyDropFrequency: 100,
+			log:                  logger.Nop{},
+		}
+		state := &database.State{LastChainBlockTimestamp: 200, LastHistoryDrop: 0}
+		require.True(t, ix.shouldRunHistoryDrop(state))
+	})
+}
+
+func TestBinarySearchBlockByTime(t *testing.T) {
+	timestamps := map[uint64]uint64{
+		0:  1000,
+		1:  1100,
+		2:  1200,
+		3:  1300,
+		4:  1400,
+		5:  1500,
+		6:  1600,
+		7:  1700,
+		8:  1800,
+		9:  1900,
+		10: 2000,
+	}
+
+	blockchain := &timestampBlockchain{timestamps: timestamps}
+
+	newIndexer := func() *Indexer[dbBlock, dbTransaction, struct{}] {
+		return &Indexer[dbBlock, dbTransaction, struct{}]{
+			blockchain: blockchain,
+			log:        logger.Nop{},
+		}
+	}
+
+	t.Run("finds first block within interval", func(t *testing.T) {
+		ix := newIndexer()
+		// latestTimestamp=2000, interval=500 → want first block where 2000-ts <= 500, i.e. ts >= 1500 → block 5
+		result, err := ix.binarySearchBlockByTime(context.Background(), 0, 10, 2000, 500)
+		require.NoError(t, err)
+		require.Equal(t, uint64(5), result)
+	})
+
+	t.Run("all blocks within interval returns low", func(t *testing.T) {
+		ix := newIndexer()
+		// interval=5000 covers all blocks
+		result, err := ix.binarySearchBlockByTime(context.Background(), 0, 10, 2000, 5000)
+		require.NoError(t, err)
+		require.Equal(t, uint64(0), result)
+	})
+
+	t.Run("single block range", func(t *testing.T) {
+		ix := newIndexer()
+		result, err := ix.binarySearchBlockByTime(context.Background(), 5, 5, 2000, 500)
+		require.NoError(t, err)
+		require.Equal(t, uint64(5), result)
+	})
+
+	t.Run("no blocks within interval returns low", func(t *testing.T) {
+		ix := newIndexer()
+		// interval=0 → only exact match with latest timestamp, which is block 10
+		result, err := ix.binarySearchBlockByTime(context.Background(), 0, 10, 2000, 0)
+		require.NoError(t, err)
+		require.Equal(t, uint64(10), result)
+	})
+}
+
+// timestampBlockchain is a test helper that returns fixed timestamps by block number.
+type timestampBlockchain struct {
+	timestamps map[uint64]uint64
+}
+
+func (t *timestampBlockchain) GetLatestBlockInfo(context.Context) (*BlockInfo, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (t *timestampBlockchain) GetBlockResult(context.Context, uint64) (*BlockResult[dbBlock, dbTransaction, struct{}], error) {
+	return nil, errors.New("not implemented")
+}
+
+func (t *timestampBlockchain) GetBlockTimestamp(_ context.Context, blockNumber uint64) (uint64, error) {
+	ts, ok := t.timestamps[blockNumber]
+	if !ok {
+		return 0, errors.New("block not found")
+	}
+	return ts, nil
+}
+
+func (t *timestampBlockchain) GetServerInfo(context.Context) (string, error) {
+	return "", nil
 }

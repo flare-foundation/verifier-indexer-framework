@@ -15,7 +15,7 @@ start_block_number = 0
 end_block_number = 510
 
 [timeout]
-timeout_millis = 3000
+request_timeout_millis = 3000
 
 [logger]
 level = "DEBUG"

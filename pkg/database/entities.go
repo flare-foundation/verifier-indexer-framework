@@ -1,5 +1,6 @@
 package database
 
+// State tracks the indexer's progress and history drop status as a singleton database row.
 type State struct {
 	ID                         uint64 `gorm:"primaryKey;unique"`
 	LastChainBlockNumber       uint64
@@ -13,6 +14,7 @@ type State struct {
 	LastHistoryDrop            uint64
 }
 
+// Version stores build and runtime metadata as a singleton database row.
 type Version struct {
 	ID               uint64 `gorm:"primaryKey;unique"`
 	NodeVersion      string
@@ -23,12 +25,22 @@ type Version struct {
 	HistorySeconds   uint64
 }
 
+// Block defines the interface that user-defined block entities must implement
+// for indexing and history pruning.
 type Block interface {
+	// GetTimestamp returns the block's timestamp as a Unix epoch in seconds.
 	GetTimestamp() uint64
+	// GetBlockNumber returns the block's sequential number on the chain.
 	GetBlockNumber() uint64
+	// HistoryDropOrder returns the entities to delete during history pruning,
+	// ordered to respect foreign key constraints.
 	HistoryDropOrder() []Deletable
 }
 
+// Transaction is intentionally defined as any to allow maximum flexibility
+// for implementors. Future versions may introduce a minimal interface.
 type Transaction any
 
+// Event is intentionally defined as any to allow maximum flexibility
+// for implementors. A struct{} value indicates no events are used.
 type Event any
