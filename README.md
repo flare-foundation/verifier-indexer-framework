@@ -79,6 +79,7 @@ On a fresh database, it starts from the configured `start_block_number`.
 The indexer performs a binary search on the chain to find the earliest block whose timestamp falls within the `history_drop` interval of the current chain tip.
 If the database already has blocks indexed past that point, it resumes from where it left off.
 Otherwise, it starts from the calculated block — meaning it will not waste time indexing blocks that would be immediately pruned.
+If the configured `start_block_number` is no longer available on the node (e.g., the node has pruned it), the framework binary-searches for the lowest block the node still serves and uses that as the effective start instead.
 
 ### Main Loop
 
