@@ -528,8 +528,9 @@ func TestFindBlockOnTheNode(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			ix := &Indexer[dbBlock, dbTransaction, struct{}]{
-				blockchain: &timestampBlockchain{timestamps: tc.available},
-				log:        logger.Nop{},
+				blockchain:               &timestampBlockchain{timestamps: tc.available},
+				blockchainWithoutBackoff: &timestampBlockchain{timestamps: tc.available},
+				log:                      logger.Nop{},
 			}
 
 			result, err := ix.findBlockOnTheNode(t.Context(), tc.low, tc.high)
