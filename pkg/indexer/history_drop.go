@@ -77,7 +77,7 @@ func (ix *Indexer[B, T, E]) getMinBlockWithinHistoryInterval(
 		return ix.startBlockNumber, nil
 	}
 
-	return ix.binarySearchBlockByTime(
+	return ix.findEarliestBlockInInterval(
 		ctx,
 		ix.startBlockNumber,
 		latestBlock.BlockNumber,
@@ -86,9 +86,12 @@ func (ix *Indexer[B, T, E]) getMinBlockWithinHistoryInterval(
 	)
 }
 
-// binarySearchBlockByTime finds the first block whose timestamp is within
-// the given interval of the latest block's timestamp.
-func (ix *Indexer[B, T, E]) binarySearchBlockByTime(
+// findEarliestBlockInInterval returns the lowest block number in [low, high]
+// whose timestamp falls within interval seconds of latestTimestamp, using
+// binary search. If no block in the range satisfies the condition, it returns
+// low — the caller is responsible for ensuring the range is non-empty and that
+// a qualifying block exists when that matters.
+func (ix *Indexer[B, T, E]) findEarliestBlockInInterval(
 	ctx context.Context,
 	low, high, latestTimestamp, interval uint64,
 ) (uint64, error) {

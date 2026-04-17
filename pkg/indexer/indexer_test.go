@@ -430,7 +430,7 @@ func TestBinarySearchBlockByTime(t *testing.T) {
 	t.Run("finds first block within interval", func(t *testing.T) {
 		ix := newIndexer()
 		// latestTimestamp=2000, interval=500 → want first block where 2000-ts <= 500, i.e. ts >= 1500 → block 5
-		result, err := ix.binarySearchBlockByTime(context.Background(), 0, 10, 2000, 500)
+		result, err := ix.findEarliestBlockInInterval(context.Background(), 0, 10, 2000, 500)
 		require.NoError(t, err)
 		require.Equal(t, uint64(5), result)
 	})
@@ -438,14 +438,14 @@ func TestBinarySearchBlockByTime(t *testing.T) {
 	t.Run("all blocks within interval returns low", func(t *testing.T) {
 		ix := newIndexer()
 		// interval=5000 covers all blocks
-		result, err := ix.binarySearchBlockByTime(context.Background(), 0, 10, 2000, 5000)
+		result, err := ix.findEarliestBlockInInterval(context.Background(), 0, 10, 2000, 5000)
 		require.NoError(t, err)
 		require.Equal(t, uint64(0), result)
 	})
 
 	t.Run("single block range", func(t *testing.T) {
 		ix := newIndexer()
-		result, err := ix.binarySearchBlockByTime(context.Background(), 5, 5, 2000, 500)
+		result, err := ix.findEarliestBlockInInterval(context.Background(), 5, 5, 2000, 500)
 		require.NoError(t, err)
 		require.Equal(t, uint64(5), result)
 	})
@@ -453,7 +453,7 @@ func TestBinarySearchBlockByTime(t *testing.T) {
 	t.Run("no blocks within interval returns low", func(t *testing.T) {
 		ix := newIndexer()
 		// interval=0 → only exact match with latest timestamp, which is block 10
-		result, err := ix.binarySearchBlockByTime(context.Background(), 0, 10, 2000, 0)
+		result, err := ix.findEarliestBlockInInterval(context.Background(), 0, 10, 2000, 0)
 		require.NoError(t, err)
 		require.Equal(t, uint64(10), result)
 	})
