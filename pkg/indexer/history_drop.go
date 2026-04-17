@@ -49,7 +49,7 @@ func (ix *Indexer[B, T, E]) getMinBlockWithinHistoryInterval(
 		return 0, fmt.Errorf("failed to get latest block info: %w", err)
 	}
 
-	firstBlockTime, err := ix.blockchain.GetBlockTimestamp(ctx, ix.startBlockNumber)
+	firstBlockTime, err := ix.blockchainWithoutBackoff.GetBlockTimestamp(ctx, ix.startBlockNumber)
 	if err != nil {
 		ix.log.Warnf("could not get configured startBlock with number %d: %v", ix.startBlockNumber, err)
 		ix.log.Warn("looking for the oldest block on the node instead")
@@ -137,7 +137,7 @@ func (ix *Indexer[B, T, E]) findBlockOnTheNode(
 	for low <= high {
 		mid := low + (high-low)/2
 
-		_, err := ix.blockchain.GetBlockTimestamp(ctx, mid)
+		_, err := ix.blockchainWithoutBackoff.GetBlockTimestamp(ctx, mid)
 		if err == nil {
 			result = mid
 			found = true
