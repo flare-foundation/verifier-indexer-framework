@@ -92,6 +92,10 @@ func (ix *Indexer[B, T, E]) binarySearchBlockByTime(
 	ctx context.Context,
 	low, high, latestTimestamp, interval uint64,
 ) (uint64, error) {
+	if low > high {
+		return 0, errors.New("invalid boundaries")
+	}
+
 	result := low
 	for low <= high {
 		mid := low + (high-low)/2
@@ -121,6 +125,10 @@ func (ix *Indexer[B, T, E]) findBlockOnTheNode(
 	ctx context.Context,
 	low, high uint64,
 ) (uint64, error) {
+	if low > high {
+		return 0, errors.New("invalid boundaries")
+	}
+
 	var result uint64
 	found := false
 	for low <= high {
