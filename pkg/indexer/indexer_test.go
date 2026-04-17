@@ -459,6 +459,90 @@ func TestBinarySearchBlockByTime(t *testing.T) {
 	})
 }
 
+func TestFindBlockOnTheNode(t *testing.T) {
+	tests := []struct {
+		name      string
+		available map[uint64]uint64 // block numbers the node serves
+		low       uint64
+		high      uint64
+		expected  uint64
+		wantErr   bool
+	}{
+		{
+			name:      "finds lowest available block when lower blocks are pruned",
+			available: map[uint64]uint64{5: 1, 6: 1, 7: 1, 8: 1, 9: 1, 10: 1},
+			low:       1,
+			high:      10,
+			expected:  5,
+		},
+		{
+			name:      "all blocks available returns low",
+			available: map[uint64]uint64{1: 1, 2: 1, 3: 1, 4: 1, 5: 1},
+			low:       1,
+			high:      5,
+			expected:  1,
+		},
+		{
+			name:      "no blocks available returns error",
+			available: map[uint64]uint64{},
+			low:       1,
+			high:      10,
+			wantErr:   true,
+		},
+		{
+			name:      "only the highest block available",
+			available: map[uint64]uint64{10: 1},
+			low:       1,
+			high:      10,
+			expected:  10,
+		},
+		{
+			name:      "single block range available",
+			available: map[uint64]uint64{5: 1},
+			low:       5,
+			high:      5,
+			expected:  5,
+		},
+		{
+			name:      "single block range not available returns error",
+			available: map[uint64]uint64{},
+			low:       5,
+			high:      5,
+			wantErr:   true,
+		},
+		{
+			name:    "low greater than high returns error",
+			low:     10,
+			high:    5,
+			wantErr: true,
+		},
+		{
+			name:      "block zero available does not underflow",
+			available: map[uint64]uint64{0: 1, 1: 1, 2: 1},
+			low:       0,
+			high:      2,
+			expected:  0,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ix := &Indexer[dbBlock, dbTransaction, struct{}]{
+				blockchain: &timestampBlockchain{timestamps: tc.available},
+				log:        logger.Nop{},
+			}
+
+			result, err := ix.findBlockOnTheNode(t.Context(), tc.low, tc.high)
+			if tc.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, tc.expected, result)
+			}
+		})
+	}
+}
+
 // timestampBlockchain is a test helper that returns fixed timestamps by block number.
 type timestampBlockchain struct {
 	timestamps map[uint64]uint64
