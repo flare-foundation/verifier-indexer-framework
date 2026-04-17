@@ -2,6 +2,7 @@ package indexer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/database"
@@ -43,14 +44,28 @@ func (ix *Indexer[B, T, E]) runHistoryDrop(
 func (ix *Indexer[B, T, E]) getMinBlockWithinHistoryInterval(
 	ctx context.Context,
 ) (uint64, error) {
-	firstBlockTime, err := ix.blockchain.GetBlockTimestamp(ctx, ix.startBlockNumber)
-	if err != nil {
-		return 0, fmt.Errorf("failed to get timestamp for start block %d: %w", ix.startBlockNumber, err)
-	}
-
 	latestBlock, err := ix.blockchain.GetLatestBlockInfo(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get latest block info: %w", err)
+	}
+
+	firstBlockTime, err := ix.blockchainWithoutBackoff.GetBlockTimestamp(ctx, ix.startBlockNumber)
+	if err != nil {
+		ix.log.Warnf("could not get configured startBlock with number %d: %v", ix.startBlockNumber, err)
+		ix.log.Warn("looking for the oldest block on the node instead")
+
+		start, findErr := ix.findBlockOnTheNode(ctx, ix.startBlockNumber, latestBlock.BlockNumber)
+		if findErr != nil {
+			return 0, fmt.Errorf("failed to find a block within numbers %d, %d: %w", ix.startBlockNumber, latestBlock.BlockNumber, findErr)
+		}
+
+		ix.log.Infof("using %d instead of start_block_number from config", start)
+		ix.startBlockNumber = start
+
+		firstBlockTime, err = ix.blockchain.GetBlockTimestamp(ctx, ix.startBlockNumber)
+		if err != nil {
+			return 0, fmt.Errorf("failed to get timestamp for fallback start block %d: %w", ix.startBlockNumber, err)
+		}
 	}
 
 	if latestBlock.Timestamp <= firstBlockTime ||
@@ -62,7 +77,7 @@ func (ix *Indexer[B, T, E]) getMinBlockWithinHistoryInterval(
 		return ix.startBlockNumber, nil
 	}
 
-	return ix.binarySearchBlockByTime(
+	return ix.findEarliestBlockInInterval(
 		ctx,
 		ix.startBlockNumber,
 		latestBlock.BlockNumber,
@@ -71,12 +86,19 @@ func (ix *Indexer[B, T, E]) getMinBlockWithinHistoryInterval(
 	)
 }
 
-// binarySearchBlockByTime finds the first block whose timestamp is within
-// the given interval of the latest block's timestamp.
-func (ix *Indexer[B, T, E]) binarySearchBlockByTime(
+// findEarliestBlockInInterval returns the lowest block number in [low, high]
+// whose timestamp falls within interval seconds of latestTimestamp, using
+// binary search. If no block in the range satisfies the condition, it returns
+// low — the caller is responsible for ensuring the range is non-empty and that
+// a qualifying block exists when that matters.
+func (ix *Indexer[B, T, E]) findEarliestBlockInInterval(
 	ctx context.Context,
 	low, high, latestTimestamp, interval uint64,
 ) (uint64, error) {
+	if low > high {
+		return 0, errors.New("invalid boundaries")
+	}
+
 	result := low
 	for low <= high {
 		mid := low + (high-low)/2
@@ -96,5 +118,41 @@ func (ix *Indexer[B, T, E]) binarySearchBlockByTime(
 			low = mid + 1
 		}
 	}
+	return result, nil
+}
+
+// findBlockOnTheNode returns the lowest block number in [low, high] for which
+// the node can serve a timestamp, using binary search. It assumes availability
+// is monotonic: if block k is served, every block above k is too.
+func (ix *Indexer[B, T, E]) findBlockOnTheNode(
+	ctx context.Context,
+	low, high uint64,
+) (uint64, error) {
+	if low > high {
+		return 0, errors.New("invalid boundaries")
+	}
+
+	var result uint64
+	found := false
+	for low <= high {
+		mid := low + (high-low)/2
+
+		_, err := ix.blockchainWithoutBackoff.GetBlockTimestamp(ctx, mid)
+		if err == nil {
+			result = mid
+			found = true
+			if mid == 0 {
+				break
+			}
+			high = mid - 1
+		} else {
+			low = mid + 1
+		}
+	}
+
+	if !found {
+		return 0, errors.New("did not find block on node")
+	}
+
 	return result, nil
 }

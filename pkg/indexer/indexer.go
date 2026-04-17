@@ -85,34 +85,36 @@ func New[B database.Block, T database.Transaction, E database.Event](
 			time.Duration(cfg.Timeout.RequestTimeoutMillis)*time.Millisecond,
 			log,
 		),
-		confirmations:         cfg.Indexer.Confirmations,
-		db:                    db,
-		maxBlockRange:         cfg.Indexer.MaxBlockRange,
-		maxConcurrency:        cfg.Indexer.MaxConcurrency,
-		startBlockNumber:      cfg.Indexer.StartBlockNumber,
-		endBlockNumber:        cfg.Indexer.EndBlockNumber,
-		historyDropInterval:   cfg.DB.HistoryDrop,
-		historyDropFrequency:  historyDropFrequency,
-		backoffMaxElapsedTime: backoffMaxElapsedTime,
-		log:                   log,
+		blockchainWithoutBackoff: blockchain,
+		confirmations:            cfg.Indexer.Confirmations,
+		db:                       db,
+		maxBlockRange:            cfg.Indexer.MaxBlockRange,
+		maxConcurrency:           cfg.Indexer.MaxConcurrency,
+		startBlockNumber:         cfg.Indexer.StartBlockNumber,
+		endBlockNumber:           cfg.Indexer.EndBlockNumber,
+		historyDropInterval:      cfg.DB.HistoryDrop,
+		historyDropFrequency:     historyDropFrequency,
+		backoffMaxElapsedTime:    backoffMaxElapsedTime,
+		log:                      log,
 	}
 }
 
 // Indexer continuously fetches blocks from a blockchain and stores them in a
 // database, with support for history pruning and configurable concurrency.
 type Indexer[B database.Block, T database.Transaction, E database.Event] struct {
-	blockchain            BlockchainClient[B, T, E]
-	confirmations         uint64
-	db                    DB[B, T, E]
-	maxBlockRange         uint64
-	maxConcurrency        int
-	startBlockNumber      uint64
-	computedStartBlock    uint64
-	endBlockNumber        uint64
-	historyDropInterval   uint64
-	historyDropFrequency  uint64
-	backoffMaxElapsedTime time.Duration
-	log                   logger.Logger
+	blockchain               BlockchainClient[B, T, E]
+	blockchainWithoutBackoff BlockchainClient[B, T, E]
+	confirmations            uint64
+	db                       DB[B, T, E]
+	maxBlockRange            uint64
+	maxConcurrency           int
+	startBlockNumber         uint64
+	computedStartBlock       uint64
+	endBlockNumber           uint64
+	historyDropInterval      uint64
+	historyDropFrequency     uint64
+	backoffMaxElapsedTime    time.Duration
+	log                      logger.Logger
 }
 
 // Run starts the indexer loop, fetching and persisting blocks until the context
