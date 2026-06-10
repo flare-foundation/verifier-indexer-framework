@@ -36,7 +36,7 @@ For an example of how to integrate please see the `cmd/example` directory.
 
 - Connects to PostgreSQL via GORM.
 - Auto-migrates your block, transaction, and event tables plus internal `state` and `version` tables.
-- Persists blocks, transactions, and events in a single atomic transaction with conflict-skip semantics (duplicates are silently ignored).
+- Persists blocks, transactions, and events in a single atomic transaction, overwriting existing rows on primary-key conflict (entity rows are deterministically derived from immutable chain data, so re-indexing a range repairs them).
 - Tracks indexer state: last/first indexed block, latest chain head, last history drop timestamp.
 - Saves build and runtime version metadata.
 - Optionally drops all tables on startup (`drop_table_at_start`).
@@ -105,7 +105,7 @@ All blocks in the range are fetched concurrently via `GetBlockResult`, bounded b
 Each call is individually wrapped with a per-request timeout and exponential backoff.
 6. **Persist.**
 The fetched blocks, transactions, events, and updated state are written to the database in a single atomic transaction.
-Duplicate entries are silently skipped.
+Rows that already exist are overwritten — entity rows are deterministically derived from immutable chain data, so re-indexing a range repairs values previously derived by older code.
 7. **Repeat.**
 If a configured `end_block_number` has been reached, the indexer exits.
 Otherwise, it loops back to step 1.

@@ -76,17 +76,25 @@ func (e TestBlockchain) GetLatestBlockInfo(context.Context) (*indexer.BlockInfo,
 }
 
 func (e TestBlockchain) GetBlockResult(ctx context.Context, blockNum uint64) (*indexer.BlockResult[dbBlock, dbTransaction, struct{}], error) {
-	hash := strconv.Itoa(int(blockNum))
-	hash = strings.Repeat("0", 64-len(hash)) + hash
 	block := dbBlock{
 		BlockNumber: blockNum,
 		Timestamp:   blockNum + 500,
-		Hash:        hash,
+		Hash:        testHash("0", blockNum),
 	}
 
-	transactions := []dbTransaction{{Hash: strings.Repeat("f", 64), Timestamp: blockNum + 500, BlockNumber: blockNum}, {Hash: strings.Repeat("e", 64), Timestamp: blockNum + 500, BlockNumber: blockNum}}
+	// Transaction hashes are unique per block, as on a real chain.
+	transactions := []dbTransaction{
+		{Hash: testHash("e", blockNum), Timestamp: blockNum + 500, BlockNumber: blockNum},
+		{Hash: testHash("f", blockNum), Timestamp: blockNum + 500, BlockNumber: blockNum},
+	}
 
 	return &indexer.BlockResult[dbBlock, dbTransaction, struct{}]{Block: block, Transactions: transactions}, nil
+}
+
+// testHash builds a 64-character hash from a one-character prefix and a number.
+func testHash(prefix string, n uint64) string {
+	num := strconv.FormatUint(n, 10)
+	return prefix + strings.Repeat("0", 63-len(num)) + num
 }
 
 func (e TestBlockchain) GetBlockTimestamp(ctx context.Context, blockNum uint64) (uint64, error) {
@@ -99,7 +107,7 @@ func (e TestBlockchain) GetServerInfo(ctx context.Context) (string, error) {
 
 type ExampleConfig struct{}
 
-// Required for interface but not used in this example
+// Required for interface but not used in this example.
 func (e *ExampleConfig) ApplyEnvOverrides() error { return nil }
 
 type dbBlock struct {
@@ -122,7 +130,7 @@ func (b dbBlock) HistoryDropOrder() []database.Deletable {
 	return []database.Deletable{emptyTransaction, emptyBlock}
 }
 
-// Required for Deletable interface
+// Required for Deletable interface.
 func (b dbBlock) TimestampField() string {
 	return "timestamp"
 }
@@ -133,7 +141,7 @@ type dbTransaction struct {
 	Timestamp   uint64 `gorm:"index"`
 }
 
-// Required for Deletable interface
+// Required for Deletable interface.
 func (t dbTransaction) TimestampField() string {
 	return "timestamp"
 }

@@ -183,14 +183,17 @@ func (db *DB[B, T, E]) GetState(ctx context.Context) (*State, error) {
 	return state, nil
 }
 
-// SaveAllEntities persists blocks, transactions, events, and indexer state in a single
-// database transaction, skipping conflicts on duplicate entries.
+// SaveAllEntities persists blocks, transactions, events, and indexer state in a
+// single database transaction. Rows that already exist are overwritten: entity
+// rows are deterministically derived from immutable chain data, so re-indexing
+// a range repairs values previously derived by older code instead of freezing
+// them forever.
 func (db *DB[B, T, E]) SaveAllEntities(
 	ctx context.Context, blocks []*B, transactions []*T, events []*E, state *State,
 ) error {
 	return db.g.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if len(blocks) != 0 {
-			err := tx.Clauses(clause.OnConflict{DoNothing: true}).
+			err := tx.Clauses(clause.OnConflict{UpdateAll: true}).
 				Create(blocks).
 				Error
 			if err != nil {
@@ -199,7 +202,7 @@ func (db *DB[B, T, E]) SaveAllEntities(
 		}
 
 		if len(transactions) != 0 {
-			err := tx.Clauses(clause.OnConflict{DoNothing: true}).
+			err := tx.Clauses(clause.OnConflict{UpdateAll: true}).
 				Create(transactions).
 				Error
 			if err != nil {
@@ -208,7 +211,7 @@ func (db *DB[B, T, E]) SaveAllEntities(
 		}
 
 		if !isEmptyStruct[E]() && len(events) != 0 {
-			err := tx.Clauses(clause.OnConflict{DoNothing: true}).
+			err := tx.Clauses(clause.OnConflict{UpdateAll: true}).
 				Create(events).
 				Error
 			if err != nil {

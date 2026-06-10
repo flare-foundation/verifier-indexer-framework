@@ -1,5 +1,23 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- `indexer.ErrBlockNotFound` sentinel: `BlockchainClient` implementations must return it (wrapped) for blocks genuinely missing on the node. Not-found errors are never retried, and only they may move the start block during history drop start-up; any other startup probe failure now aborts instead of silently raising the start block.
+
+### Changed
+
+- **Breaking:** `SaveAllEntities` overwrites existing rows on primary-key conflict (`ON CONFLICT DO UPDATE`) instead of skipping them, so re-indexing a range repairs values derived by older code. Entities must have unique primary keys within a batch (as on a real chain).
+- The first-indexed-block boundary only ever moves up (except the empty-table reset). Consumers must read a state with `first > last` (or `first == 0`) as an empty advertised range.
+- Removed the internal unretried blockchain client: startup probes now retry transient errors and fail fast on `ErrBlockNotFound`.
+
+### Fixed
+
+- History drop persists the updated state: the first-indexed boundary is persisted before any rows are deleted and again on completion, and the indexer persists the merged state immediately when picking up a drop result. The stored state can no longer advertise already-deleted blocks.
+- Resuming past unindexed blocks (e.g. downtime longer than the retention window) moves and persists the coverage boundary before indexing begins instead of advertising the gap as covered.
+- The zero reset after a drop empties the database is no longer ignored, and the first indexed block is re-established by the next saved batch.
+
 ## [v1.1.1] - 2026-4-17
 
 ### Added
