@@ -132,7 +132,9 @@ type Deletable interface {
 var validColumnName = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
 // deleteInBatches removes rows from the entity's table where the timestamp column
-// is older than deleteStart, processing up to deleteBatchSize rows per transaction.
+// is older than deleteStart, processing up to deleteBatchSize rows per statement.
+// Postgres does not support LIMIT on DELETE (gorm silently drops it), so the
+// batch is selected by ctid in a subquery.
 func deleteInBatches(ctx context.Context, db *gorm.DB, deleteStart uint64, entity Deletable) error {
 	col := entity.TimestampField()
 	if !validColumnName.MatchString(col) {
@@ -146,8 +148,15 @@ func deleteInBatches(ctx context.Context, db *gorm.DB, deleteStart uint64, entit
 		default:
 		}
 
-		result := db.WithContext(ctx).Limit(deleteBatchSize).Where(
-			fmt.Sprintf("%s < ?", col), deleteStart).
+		batch := db.WithContext(ctx).
+			Session(&gorm.Session{NewDB: true}).
+			Model(entity).
+			Select("ctid").
+			Where(fmt.Sprintf("%s < ?", col), deleteStart).
+			Limit(deleteBatchSize)
+
+		result := db.WithContext(ctx).
+			Where("ctid IN (?)", batch).
 			Delete(entity)
 
 		if result.Error != nil {
