@@ -203,6 +203,10 @@ You do **not** need to implement retry logic — the framework wraps every call 
 Methods taking a block number must return an error wrapping `indexer.ErrBlockNotFound` when the block does not exist on the node (e.g. pruned or not yet available).
 The framework relies on this to distinguish missing blocks from transient failures: not-found errors are never retried, and only they may move the start block to the oldest available block during history drop start-up.
 
+Deterministic processing failures — data in a validated block that the implementation cannot parse — must wrap `indexer.ErrInvalidData`.
+Such errors are not retried and abort the indexer immediately with a clear error: retrying cannot help, and silently skipping data would corrupt the advertised coverage.
+Resolving one requires operator action, usually an indexer upgrade that understands the new data format.
+
 ### 5. Blockchain Config (Optional)
 
 A struct implementing `config.EnvOverrideable`:

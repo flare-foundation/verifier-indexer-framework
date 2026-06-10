@@ -21,11 +21,21 @@ import (
 // case so the indexer can distinguish missing blocks from transient failures.
 var ErrBlockNotFound = errors.New("block not found on the node")
 
+// ErrInvalidData marks node data that the implementation cannot process, e.g.
+// a transaction in a validated block that fails to parse. Such failures are
+// deterministic: BlockchainClient implementations must return an error
+// wrapping it so the indexer aborts immediately with a clear error instead of
+// retrying for the full backoff window. Skipping the data is not an option for
+// an attestation indexer, so resolving this requires operator action (usually
+// an indexer upgrade that understands the new data format).
+var ErrInvalidData = errors.New("invalid data from the node")
+
 // BlockchainClient defines the operations the indexer requires from a blockchain node.
 //
 // Methods taking a block number must return an error wrapping ErrBlockNotFound
-// when the block does not exist on the node; such errors are not retried. All
-// other errors are treated as transient.
+// when the block does not exist on the node; such errors are not retried.
+// Deterministic processing failures must wrap ErrInvalidData; they are not
+// retried and abort the indexer. All other errors are treated as transient.
 type BlockchainClient[B database.Block, T database.Transaction, E database.Event] interface {
 	// GetLatestBlockInfo returns the number and timestamp of the latest block.
 	GetLatestBlockInfo(context.Context) (*BlockInfo, error)
@@ -261,6 +271,12 @@ func (ix *Indexer[B, T, E]) runIteration(
 		func() error {
 			results, err := ix.getIterationResults(ctx, state)
 			if err != nil {
+				// Deterministic data failures abort the indexer immediately;
+				// retrying cannot help and skipping data is not an option.
+				if errors.Is(err, ErrInvalidData) {
+					return backoff.Permanent(err)
+				}
+
 				return err
 			}
 

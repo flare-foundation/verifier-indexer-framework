@@ -863,6 +863,47 @@ func TestRetryWithBackoffBlockNotFound(t *testing.T) {
 		require.Equal(t, uint64(42), ts)
 		require.Equal(t, 2, client.calls)
 	})
+
+	t.Run("does not retry invalid data", func(t *testing.T) {
+		client := &flakyBlockchain{errs: []error{fmt.Errorf("bad tx: %w", ErrInvalidData)}}
+		bwb := newBlockchainWithBackoff[dbBlock, dbTransaction, struct{}](client, 5*time.Second, 100*time.Millisecond, logger.Nop{})
+
+		_, err := bwb.GetBlockTimestamp(t.Context(), 5)
+		require.ErrorIs(t, err, ErrInvalidData)
+		require.Equal(t, 1, client.calls)
+	})
+}
+
+func TestRunIterationAbortsOnInvalidData(t *testing.T) {
+	cfg := config.Base{
+		Indexer: config.Indexer{
+			Confirmations:  1,
+			MaxBlockRange:  1,
+			MaxConcurrency: 1,
+		},
+		Timeout: config.TimeoutConfig{
+			BackoffMaxElapsedTimeSeconds: 60,
+			RequestTimeoutMillis:         1000,
+		},
+	}
+
+	chain := &flakyBlockchain{
+		latest: &BlockInfo{BlockNumber: 102, Timestamp: 102000},
+		errs:   []error{fmt.Errorf("unmarshal transaction 0: %w", ErrInvalidData)},
+	}
+	ix := New(&cfg, &mockDB{}, chain, logger.Nop{})
+
+	var historyDropLock sync.Mutex
+	historyDropResults := make(chan *database.State, 1)
+	upToDateBackoff := backoff.NewExponentialBackOff(backoff.WithMaxElapsedTime(0))
+
+	state := &database.State{LastIndexedBlockNumber: 100}
+
+	start := time.Now()
+	_, err := ix.runIteration(t.Context(), state, &historyDropLock, historyDropResults, upToDateBackoff)
+	require.ErrorIs(t, err, ErrInvalidData)
+	require.Equal(t, 1, chain.calls, "deterministic data failures must not be retried")
+	require.Less(t, time.Since(start), 10*time.Second, "must abort immediately, not after the backoff window")
 }
 
 // timestampBlockchain is a test helper that returns fixed timestamps by block

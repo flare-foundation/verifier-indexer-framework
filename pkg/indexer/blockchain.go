@@ -34,8 +34,8 @@ func newBlockchainWithBackoff[B database.Block, T database.Transaction, E databa
 }
 
 // retryWithBackoff executes the given operation with exponential backoff, applying
-// a per-request timeout on each attempt. Errors wrapping ErrBlockNotFound are
-// permanent and returned without retrying.
+// a per-request timeout on each attempt. Errors wrapping ErrBlockNotFound or
+// ErrInvalidData are permanent and returned without retrying.
 func retryWithBackoff[B database.Block, T database.Transaction, E database.Event, R any](
 	ctx context.Context,
 	bwb *blockchainWithBackoff[B, T, E],
@@ -49,7 +49,7 @@ func retryWithBackoff[B database.Block, T database.Transaction, E database.Event
 			defer cancel()
 
 			result, err = op(ctx)
-			if err != nil && errors.Is(err, ErrBlockNotFound) {
+			if err != nil && (errors.Is(err, ErrBlockNotFound) || errors.Is(err, ErrInvalidData)) {
 				return backoff.Permanent(err)
 			}
 
