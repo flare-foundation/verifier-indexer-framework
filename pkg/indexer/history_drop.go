@@ -49,10 +49,15 @@ func (ix *Indexer[B, T, E]) getMinBlockWithinHistoryInterval(
 		return 0, fmt.Errorf("failed to get latest block info: %w", err)
 	}
 
-	firstBlockTime, err := ix.blockchainWithoutBackoff.GetBlockTimestamp(ctx, ix.startBlockNumber)
+	firstBlockTime, err := ix.blockchain.GetBlockTimestamp(ctx, ix.startBlockNumber)
 	if err != nil {
-		ix.log.Warnf("could not get configured startBlock with number %d: %v", ix.startBlockNumber, err)
-		ix.log.Warn("looking for the oldest block on the node instead")
+		// Only a block genuinely absent from the node may move the start block;
+		// any other failure aborts the startup instead of silently raising it.
+		if !errors.Is(err, ErrBlockNotFound) {
+			return 0, fmt.Errorf("failed to get timestamp for configured start block %d: %w", ix.startBlockNumber, err)
+		}
+
+		ix.log.Warnf("configured start block %d not found on the node, looking for the oldest available block instead", ix.startBlockNumber)
 
 		start, findErr := ix.findBlockOnTheNode(ctx, ix.startBlockNumber, latestBlock.BlockNumber)
 		if findErr != nil {
@@ -123,7 +128,9 @@ func (ix *Indexer[B, T, E]) findEarliestBlockInInterval(
 
 // findBlockOnTheNode returns the lowest block number in [low, high] for which
 // the node can serve a timestamp, using binary search. It assumes availability
-// is monotonic: if block k is served, every block above k is too.
+// is monotonic: if block k is served, every block above k is too. Only errors
+// wrapping ErrBlockNotFound count as absent blocks; any other error aborts the
+// search.
 func (ix *Indexer[B, T, E]) findBlockOnTheNode(
 	ctx context.Context,
 	low, high uint64,
@@ -137,17 +144,22 @@ func (ix *Indexer[B, T, E]) findBlockOnTheNode(
 	for low <= high {
 		mid := low + (high-low)/2
 
-		_, err := ix.blockchainWithoutBackoff.GetBlockTimestamp(ctx, mid)
-		if err == nil {
-			result = mid
-			found = true
-			if mid == 0 {
-				break
+		_, err := ix.blockchain.GetBlockTimestamp(ctx, mid)
+		if err != nil {
+			if !errors.Is(err, ErrBlockNotFound) {
+				return 0, fmt.Errorf("failed to get timestamp for block %d during search: %w", mid, err)
 			}
-			high = mid - 1
-		} else {
+
 			low = mid + 1
+			continue
 		}
+
+		result = mid
+		found = true
+		if mid == 0 {
+			break
+		}
+		high = mid - 1
 	}
 
 	if !found {

@@ -197,6 +197,9 @@ type BlockchainClient[B Block, T Transaction, E Event] interface {
 
 You do **not** need to implement retry logic — the framework wraps every call with exponential backoff automatically.
 
+Methods taking a block number must return an error wrapping `indexer.ErrBlockNotFound` when the block does not exist on the node (e.g. pruned or not yet available).
+The framework relies on this to distinguish missing blocks from transient failures: not-found errors are never retried, and only they may move the start block to the oldest available block during history drop start-up.
+
 ### 5. Blockchain Config (Optional)
 
 A struct implementing `config.EnvOverrideable`:

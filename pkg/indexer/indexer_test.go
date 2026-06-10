@@ -3,8 +3,10 @@ package indexer
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/config"
@@ -699,9 +701,8 @@ func TestFindBlockOnTheNode(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			ix := &Indexer[dbBlock, dbTransaction, struct{}]{
-				blockchain:               &timestampBlockchain{timestamps: tc.available},
-				blockchainWithoutBackoff: &timestampBlockchain{timestamps: tc.available},
-				log:                      logger.Nop{},
+				blockchain: &timestampBlockchain{timestamps: tc.available},
+				log:        logger.Nop{},
 			}
 
 			result, err := ix.findBlockOnTheNode(t.Context(), tc.low, tc.high)
@@ -713,15 +714,97 @@ func TestFindBlockOnTheNode(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("transient failure during search aborts instead of skipping the block", func(t *testing.T) {
+		available := map[uint64]uint64{5: 1, 6: 1, 7: 1, 8: 1, 9: 1, 10: 1}
+		ix := &Indexer[dbBlock, dbTransaction, struct{}]{
+			blockchain: &timestampBlockchain{timestamps: available, transient: map[uint64]bool{3: true}},
+			log:        logger.Nop{},
+		}
+
+		_, err := ix.findBlockOnTheNode(t.Context(), 1, 10)
+		require.ErrorContains(t, err, "during search")
+	})
 }
 
-// timestampBlockchain is a test helper that returns fixed timestamps by block number.
+func TestGetMinBlockWithinHistoryInterval(t *testing.T) {
+	t.Run("transient failure on the start block aborts instead of moving it", func(t *testing.T) {
+		ix := &Indexer[dbBlock, dbTransaction, struct{}]{
+			blockchain: &timestampBlockchain{
+				timestamps: map[uint64]uint64{10: 100},
+				transient:  map[uint64]bool{10: true},
+				latest:     &BlockInfo{BlockNumber: 100, Timestamp: 1000},
+			},
+			startBlockNumber:    10,
+			historyDropInterval: 200,
+			log:                 logger.Nop{},
+		}
+
+		_, err := ix.getMinBlockWithinHistoryInterval(t.Context())
+		require.Error(t, err)
+		require.Equal(t, uint64(10), ix.startBlockNumber, "start block must not move on a transient failure")
+	})
+
+	t.Run("pruned start block falls back to the oldest available block", func(t *testing.T) {
+		timestamps := make(map[uint64]uint64)
+		for n := uint64(50); n <= 100; n++ {
+			timestamps[n] = n * 10
+		}
+
+		ix := &Indexer[dbBlock, dbTransaction, struct{}]{
+			blockchain: &timestampBlockchain{
+				timestamps: timestamps,
+				latest:     &BlockInfo{BlockNumber: 100, Timestamp: 1000},
+			},
+			startBlockNumber:    10,
+			historyDropInterval: 200,
+			log:                 logger.Nop{},
+		}
+
+		// Blocks below 50 are pruned: the start block moves to 50 and the
+		// history boundary is the first block within 200s of the chain tip.
+		result, err := ix.getMinBlockWithinHistoryInterval(t.Context())
+		require.NoError(t, err)
+		require.Equal(t, uint64(50), ix.startBlockNumber)
+		require.Equal(t, uint64(80), result)
+	})
+}
+
+func TestRetryWithBackoffBlockNotFound(t *testing.T) {
+	t.Run("does not retry when the block is not found", func(t *testing.T) {
+		client := &flakyBlockchain{errs: []error{fmt.Errorf("block 5: %w", ErrBlockNotFound)}}
+		bwb := newBlockchainWithBackoff[dbBlock, dbTransaction, struct{}](client, 5*time.Second, 100*time.Millisecond, logger.Nop{})
+
+		_, err := bwb.GetBlockTimestamp(t.Context(), 5)
+		require.ErrorIs(t, err, ErrBlockNotFound)
+		require.Equal(t, 1, client.calls)
+	})
+
+	t.Run("retries transient errors", func(t *testing.T) {
+		client := &flakyBlockchain{errs: []error{errors.New("connection reset")}}
+		bwb := newBlockchainWithBackoff[dbBlock, dbTransaction, struct{}](client, 5*time.Second, 100*time.Millisecond, logger.Nop{})
+
+		ts, err := bwb.GetBlockTimestamp(t.Context(), 5)
+		require.NoError(t, err)
+		require.Equal(t, uint64(42), ts)
+		require.Equal(t, 2, client.calls)
+	})
+}
+
+// timestampBlockchain is a test helper that returns fixed timestamps by block
+// number. Blocks listed in transient fail with a non-permanent error; absent
+// blocks fail with ErrBlockNotFound.
 type timestampBlockchain struct {
 	timestamps map[uint64]uint64
+	transient  map[uint64]bool
+	latest     *BlockInfo
 }
 
 func (t *timestampBlockchain) GetLatestBlockInfo(context.Context) (*BlockInfo, error) {
-	return nil, errors.New("not implemented")
+	if t.latest == nil {
+		return nil, errors.New("not implemented")
+	}
+	return t.latest, nil
 }
 
 func (t *timestampBlockchain) GetBlockResult(context.Context, uint64) (*BlockResult[dbBlock, dbTransaction, struct{}], error) {
@@ -729,13 +812,61 @@ func (t *timestampBlockchain) GetBlockResult(context.Context, uint64) (*BlockRes
 }
 
 func (t *timestampBlockchain) GetBlockTimestamp(_ context.Context, blockNumber uint64) (uint64, error) {
+	if t.transient[blockNumber] {
+		return 0, errors.New("connection reset")
+	}
+
 	ts, ok := t.timestamps[blockNumber]
 	if !ok {
-		return 0, errors.New("block not found")
+		return 0, fmt.Errorf("block %d: %w", blockNumber, ErrBlockNotFound)
 	}
 	return ts, nil
 }
 
 func (t *timestampBlockchain) GetServerInfo(context.Context) (string, error) {
 	return "", nil
+}
+
+// flakyBlockchain returns queued errors from the block calls before succeeding,
+// counting the calls made; latest, when set, is served without error.
+type flakyBlockchain struct {
+	calls  int
+	errs   []error
+	latest *BlockInfo
+}
+
+func (f *flakyBlockchain) GetLatestBlockInfo(context.Context) (*BlockInfo, error) {
+	if f.latest == nil {
+		return nil, errors.New("not implemented")
+	}
+	return f.latest, nil
+}
+
+func (f *flakyBlockchain) GetBlockResult(_ context.Context, blockNumber uint64) (*BlockResult[dbBlock, dbTransaction, struct{}], error) {
+	if err := f.next(); err != nil {
+		return nil, err
+	}
+	return &BlockResult[dbBlock, dbTransaction, struct{}]{Block: dbBlock{BlockNumber: blockNumber, Timestamp: 42}}, nil
+}
+
+func (f *flakyBlockchain) GetBlockTimestamp(context.Context, uint64) (uint64, error) {
+	if err := f.next(); err != nil {
+		return 0, err
+	}
+	return 42, nil
+}
+
+// next counts the call and pops the next scripted error, if any.
+func (f *flakyBlockchain) next() error {
+	f.calls++
+	if len(f.errs) == 0 {
+		return nil
+	}
+	err := f.errs[0]
+	f.errs = f.errs[1:]
+	return err
+}
+
+func (f *flakyBlockchain) GetServerInfo(context.Context) (string, error) {
+	return "", errors.New("not implemented")
 }
