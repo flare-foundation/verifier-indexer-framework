@@ -242,9 +242,9 @@ func TestPollHistoryDropResults(t *testing.T) {
 		require.Len(t, db.states, 1)
 	})
 
-	t.Run("takes the older surviving boundary from the drop", func(t *testing.T) {
-		// State loaded from an older run can trail the in-memory boundary; the
-		// drop's fresh database read is authoritative when it is older.
+	t.Run("never lowers the boundary onto rows outside the advertised range", func(t *testing.T) {
+		// After resuming past unindexed blocks the boundary sits above stale
+		// surviving rows; the drop's recomputed (lower) boundary must not win.
 		db := &mockDB{}
 		ix := Indexer[dbBlock, dbTransaction, struct{}]{db: db, historyDropInterval: 200, log: logger.Nop{}}
 		lock := newLockedMutex()
@@ -264,8 +264,9 @@ func TestPollHistoryDropResults(t *testing.T) {
 
 		err := ix.pollHistoryDropResults(ctx, lock, results, state)
 		require.NoError(t, err)
-		require.Equal(t, uint64(302), state.FirstIndexedBlockNumber)
-		require.Equal(t, uint64(802), state.FirstIndexedBlockTimestamp)
+		require.Equal(t, uint64(305), state.FirstIndexedBlockNumber)
+		require.Equal(t, uint64(805), state.FirstIndexedBlockTimestamp)
+		require.Equal(t, uint64(12345), state.LastHistoryDrop)
 	})
 
 	t.Run("nil result returns an error", func(t *testing.T) {
@@ -324,6 +325,79 @@ func TestGetInitialStartBlockNumber(t *testing.T) {
 		startBlock, err := ix.getInitialStartBlockNumber(ctx, &state)
 		require.NoError(t, err)
 		require.Equal(t, uint64(500), startBlock)
+	})
+
+	// Chain with blocks 0-100, timestamps n*10, history interval 200: the
+	// history drop window starts at block 80.
+	newHistoryDropIndexer := func(db *mockDB) *Indexer[dbBlock, dbTransaction, struct{}] {
+		timestamps := make(map[uint64]uint64)
+		for n := uint64(0); n <= 100; n++ {
+			timestamps[n] = n * 10
+		}
+
+		return &Indexer[dbBlock, dbTransaction, struct{}]{
+			blockchain: &timestampBlockchain{
+				timestamps: timestamps,
+				latest:     &BlockInfo{BlockNumber: 100, Timestamp: 1000},
+			},
+			db:                  db,
+			historyDropInterval: 200,
+			log:                 logger.Nop{},
+		}
+	}
+
+	t.Run("resumes within history window from last indexed block", func(t *testing.T) {
+		db := &mockDB{}
+		ix := newHistoryDropIndexer(db)
+		state := database.State{
+			LastIndexedBlockNumber:     90,
+			FirstIndexedBlockNumber:    85,
+			FirstIndexedBlockTimestamp: 850,
+		}
+
+		startBlock, err := ix.getInitialStartBlockNumber(ctx, &state)
+		require.NoError(t, err)
+		require.Equal(t, uint64(91), startBlock)
+		require.Equal(t, uint64(85), state.FirstIndexedBlockNumber)
+		require.Empty(t, db.states, "no state write needed on a normal resume")
+	})
+
+	t.Run("resumes contiguously when the window starts right after the last indexed block", func(t *testing.T) {
+		db := &mockDB{}
+		ix := newHistoryDropIndexer(db)
+		state := database.State{
+			LastIndexedBlockNumber:     79,
+			FirstIndexedBlockNumber:    60,
+			FirstIndexedBlockTimestamp: 600,
+		}
+
+		startBlock, err := ix.getInitialStartBlockNumber(ctx, &state)
+		require.NoError(t, err)
+		require.Equal(t, uint64(80), startBlock)
+		require.Equal(t, uint64(60), state.FirstIndexedBlockNumber, "contiguous coverage must be kept")
+		require.Empty(t, db.states)
+	})
+
+	t.Run("resume past unindexed blocks moves and persists the coverage boundary", func(t *testing.T) {
+		db := &mockDB{}
+		ix := newHistoryDropIndexer(db)
+
+		// Last indexed block 50 is far behind the history window start (80):
+		// blocks 51-79 will never be indexed.
+		state := database.State{
+			LastIndexedBlockNumber:     50,
+			FirstIndexedBlockNumber:    10,
+			FirstIndexedBlockTimestamp: 100,
+		}
+
+		startBlock, err := ix.getInitialStartBlockNumber(ctx, &state)
+		require.NoError(t, err)
+		require.Equal(t, uint64(80), startBlock)
+		require.Equal(t, uint64(80), state.FirstIndexedBlockNumber)
+		require.Equal(t, uint64(800), state.FirstIndexedBlockTimestamp)
+
+		require.Len(t, db.states, 1, "moved boundary must be persisted before indexing begins")
+		require.Equal(t, &state, db.states[0])
 	})
 }
 

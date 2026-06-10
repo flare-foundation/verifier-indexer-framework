@@ -1,6 +1,10 @@
 package database
 
-// State tracks the indexer's progress and history drop status as a singleton database row.
+// State tracks the indexer's progress and history drop status as a singleton
+// database row. First/LastIndexedBlockNumber advertise the contiguous indexed
+// range; the range is empty when FirstIndexedBlockNumber is zero or greater
+// than LastIndexedBlockNumber (transiently possible after resuming past
+// unindexed blocks).
 type State struct {
 	ID                         uint64 `gorm:"primaryKey;unique"`
 	LastChainBlockNumber       uint64

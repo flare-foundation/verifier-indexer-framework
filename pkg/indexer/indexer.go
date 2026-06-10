@@ -185,9 +185,34 @@ func (ix *Indexer[B, T, E]) getInitialStartBlockNumber(ctx context.Context, stat
 		return 0, fmt.Errorf("failed to calculate start block number based on history drop interval: %w", err)
 	}
 
-	if state.LastIndexedBlockNumber >= historyDropStartBlock {
+	if state.LastIndexedBlockNumber+1 >= historyDropStartBlock {
 		ix.log.Infof("resuming after last indexed block from the database: %d", state.LastIndexedBlockNumber)
 		return state.LastIndexedBlockNumber + 1, nil
+	}
+
+	if state.LastIndexedBlockNumber > 0 {
+		// Indexing resumes ahead of the last indexed block, so the blocks in
+		// between are never indexed. Move the advertised coverage boundary to
+		// the new start block and persist it before indexing begins, so the
+		// state never claims the gap or the stale rows below it as covered.
+		firstBlockTime, err := ix.blockchain.GetBlockTimestamp(ctx, historyDropStartBlock)
+		if err != nil {
+			return 0, fmt.Errorf("failed to get timestamp for resume start block %d: %w", historyDropStartBlock, err)
+		}
+
+		ix.log.Warnf(
+			"resuming from block %d leaves blocks %d to %d unindexed, moving the first indexed block boundary",
+			historyDropStartBlock, state.LastIndexedBlockNumber+1, historyDropStartBlock-1,
+		)
+
+		state.FirstIndexedBlockNumber = historyDropStartBlock
+		state.FirstIndexedBlockTimestamp = firstBlockTime
+
+		if err := ix.db.SaveAllEntities(ctx, nil, nil, nil, state); err != nil {
+			return 0, fmt.Errorf("failed to persist state when resuming past unindexed blocks: %w", err)
+		}
+
+		return historyDropStartBlock, nil
 	}
 
 	ix.log.Infof("no blocks indexed yet within history drop interval, starting from block number: %d", historyDropStartBlock)
@@ -370,10 +395,11 @@ func (ix *Indexer[B, T, E]) pollHistoryDropResults(
 
 // mergeFirstIndexed reconciles the first-indexed boundary computed by a history
 // drop with the in-memory state, which a concurrent iteration may have advanced
-// past the drop's database read. The in-memory boundary is kept only when it
-// references blocks that survive the drop's deletion threshold and is the
-// oldest; otherwise the drop result wins, including the zero reset for an
-// emptied database.
+// past the drop's database read. The boundary only ever moves up — rows older
+// than it may exist (e.g. after resuming past unindexed blocks) but are outside
+// the advertised contiguous range — except for the zero reset when the drop
+// emptied the database and the in-memory boundary does not survive the drop's
+// deletion threshold.
 func (ix *Indexer[B, T, E]) mergeFirstIndexed(state, dropState *database.State) {
 	// The drop deleted blocks with timestamps below this boundary; the drop's
 	// state copy preserves the chain timestamp the boundary was derived from.
@@ -383,9 +409,8 @@ func (ix *Indexer[B, T, E]) mergeFirstIndexed(state, dropState *database.State) 
 	}
 
 	memSurvives := state.FirstIndexedBlockNumber > 0 && state.FirstIndexedBlockTimestamp >= boundary
-	dropNonEmpty := dropState.FirstIndexedBlockNumber > 0
 
-	if memSurvives && (!dropNonEmpty || state.FirstIndexedBlockNumber <= dropState.FirstIndexedBlockNumber) {
+	if memSurvives && dropState.FirstIndexedBlockNumber <= state.FirstIndexedBlockNumber {
 		return
 	}
 

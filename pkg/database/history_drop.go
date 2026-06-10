@@ -49,12 +49,17 @@ func (db *DB[B, T, E]) DropHistoryIteration(
 	}
 
 	newState.LastHistoryDrop = uint64(time.Now().Unix())
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+	switch {
+	case errors.Is(err, gorm.ErrRecordNotFound):
 		newState.FirstIndexedBlockNumber = 0
 		newState.FirstIndexedBlockTimestamp = 0
-	} else {
+	case firstBlock.GetBlockNumber() > newState.FirstIndexedBlockNumber:
 		newState.FirstIndexedBlockNumber = firstBlock.GetBlockNumber()
 		newState.FirstIndexedBlockTimestamp = firstBlock.GetTimestamp()
+	default:
+		// Rows older than the current boundary exist (e.g. after resuming past
+		// unindexed blocks); they are outside the advertised contiguous range,
+		// so the boundary is not lowered onto them.
 	}
 
 	if err := db.persistHistoryDropState(ctx, &newState); err != nil {

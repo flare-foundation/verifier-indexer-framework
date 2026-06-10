@@ -79,6 +79,9 @@ On a fresh database, it starts from the configured `start_block_number`.
 The indexer performs a binary search on the chain to find the earliest block whose timestamp falls within the `history_drop` interval of the current chain tip.
 If the database already has blocks indexed past that point, it resumes from where it left off.
 Otherwise, it starts from the calculated block — meaning it will not waste time indexing blocks that would be immediately pruned.
+When that skips ahead of previously indexed data (e.g., downtime longer than the retention window), the blocks in between are never indexed: the first-indexed-block boundary is moved up to the new start and persisted before indexing begins, so the state never advertises the gap as covered.
+Any older rows still in the database sit outside the advertised range until history drops remove them.
+Until the first new batch is saved, the persisted state may have a first indexed block greater than the last indexed block — consumers must read that (like a zero first indexed block) as an empty advertised range.
 If the configured `start_block_number` is no longer available on the node (e.g., the node has pruned it), the framework binary-searches for the lowest block the node still serves and uses that as the effective start instead.
 
 ### Main Loop
