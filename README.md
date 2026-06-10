@@ -248,7 +248,7 @@ func main() {
 The four type parameters are: `[Block, Config, Transaction, Event]`.
 
 Set `DefaultConfig` to provide defaults for your blockchain-specific fields — these are used before the TOML file and env overrides are applied.
-If you have no defaults, this can be omitted (zero value).
+If you have no defaults, this can be omitted: a nil pointer config is allocated automatically, so `ApplyEnvOverrides` and your constructor never receive a nil receiver.
 
 ## Configuration Reference
 

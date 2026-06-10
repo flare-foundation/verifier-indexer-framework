@@ -2,7 +2,9 @@ package framework
 
 import (
 	"context"
+	"errors"
 	"os/signal"
+	"reflect"
 	"syscall"
 
 	"github.com/alexflint/go-arg"
@@ -26,6 +28,21 @@ type Input[B database.Block, C config.EnvOverrideable, T database.Transaction, E
 	NewBlockchainClient func(C) (indexer.BlockchainClient[B, T, E], error)
 }
 
+// allocateIfNil replaces a nil pointer config with a freshly allocated value so
+// TOML decoding and ApplyEnvOverrides never operate on a nil receiver when
+// DefaultConfig is omitted for a pointer config type.
+func allocateIfNil[C any](c C) C {
+	v := reflect.ValueOf(c)
+	if v.Kind() == reflect.Pointer && v.IsNil() {
+		// The assertion cannot fail: a freshly allocated *Elem is exactly C.
+		if allocated, ok := reflect.New(v.Type().Elem()).Interface().(C); ok {
+			return allocated
+		}
+	}
+
+	return c
+}
+
 // Run parses CLI arguments, loads configuration, connects to the database,
 // and starts the indexer loop. It blocks until the context is cancelled or
 // an error occurs.
@@ -39,6 +56,10 @@ func Run[B database.Block, C config.EnvOverrideable, T database.Transaction, E d
 // runWithArgs initializes the full framework stack from the provided input and
 // CLI arguments, then runs the indexer until completion or cancellation.
 func runWithArgs[B database.Block, C config.EnvOverrideable, T database.Transaction, E database.Event](input Input[B, C, T, E], args CLIArgs) error {
+	if input.NewBlockchainClient == nil {
+		return errors.New("framework input: NewBlockchainClient must be provided")
+	}
+
 	type Config struct {
 		config.Base
 		Blockchain C
@@ -46,7 +67,7 @@ func runWithArgs[B database.Block, C config.EnvOverrideable, T database.Transact
 
 	cfg := Config{
 		Base:       config.DefaultBase,
-		Blockchain: input.DefaultConfig,
+		Blockchain: allocateIfNil(input.DefaultConfig),
 	}
 
 	if err := config.ReadFile(args.ConfigFile, &cfg); err != nil {

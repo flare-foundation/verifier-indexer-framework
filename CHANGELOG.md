@@ -14,6 +14,7 @@
 
 ### Fixed
 
+- Omitting `DefaultConfig` for a pointer config type no longer leads to a nil-receiver call: a nil pointer config is allocated before TOML decoding, so `ApplyEnvOverrides` (which previously panicked as soon as the matching environment variable was set) and the blockchain client constructor never receive nil. `framework.Run` also returns a descriptive error when `NewBlockchainClient` is missing instead of panicking later.
 - History drop deletion is now actually batched: Postgres does not support `LIMIT` on `DELETE` and gorm silently dropped it, so each history drop ran one unbounded delete. Batches are now selected by `ctid` in a subquery, restoring the intended 1000-row batches that avoid long-running locks.
 - History drop persists the updated state: the first-indexed boundary is persisted before any rows are deleted and again on completion, and the indexer persists the merged state immediately when picking up a drop result. The stored state can no longer advertise already-deleted blocks.
 - Resuming past unindexed blocks (e.g. downtime longer than the retention window) moves and persists the coverage boundary before indexing begins instead of advertising the gap as covered.
