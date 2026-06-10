@@ -218,7 +218,7 @@ func (ix *Indexer[B, T, E]) runIteration(
 		return nil, fmt.Errorf("fatal error in indexer: %w", err)
 	}
 
-	if err := ix.pollHistoryDropResults(historyDropLock, historyDropResults, state); err != nil {
+	if err := ix.pollHistoryDropResults(ctx, historyDropLock, historyDropResults, state); err != nil {
 		return nil, fmt.Errorf("pollHistoryDropResults failed: %w", err)
 	}
 
@@ -324,8 +324,9 @@ func (ix *Indexer[B, T, E]) maybeRunHistoryDrop(
 }
 
 // pollHistoryDropResults checks for completed history drop results without blocking
-// and applies the updated state if available.
+// and applies and persists the updated state if available.
 func (ix *Indexer[B, T, E]) pollHistoryDropResults(
+	ctx context.Context,
 	historyDropLock *sync.Mutex,
 	historyDropResults chan *database.State,
 	state *database.State,
@@ -343,10 +344,13 @@ func (ix *Indexer[B, T, E]) pollHistoryDropResults(
 
 		ix.log.Debugf("history drop completed, new state: %+v", newState)
 		state.LastHistoryDrop = newState.LastHistoryDrop
+		ix.mergeFirstIndexed(state, newState)
 
-		if newState.FirstIndexedBlockNumber > state.FirstIndexedBlockNumber {
-			state.FirstIndexedBlockNumber = newState.FirstIndexedBlockNumber
-			state.FirstIndexedBlockTimestamp = newState.FirstIndexedBlockTimestamp
+		// Persist immediately: the next regular save runs only when new blocks
+		// arrive, and an iteration that was in flight while the drop finished may
+		// have overwritten the columns persisted by the drop with stale values.
+		if err := ix.db.SaveAllEntities(ctx, nil, nil, nil, state); err != nil {
+			return fmt.Errorf("failed to save state after history drop: %w", err)
 		}
 
 	// default case to avoid blocking if results not available
@@ -354,6 +358,31 @@ func (ix *Indexer[B, T, E]) pollHistoryDropResults(
 	}
 
 	return nil
+}
+
+// mergeFirstIndexed reconciles the first-indexed boundary computed by a history
+// drop with the in-memory state, which a concurrent iteration may have advanced
+// past the drop's database read. The in-memory boundary is kept only when it
+// references blocks that survive the drop's deletion threshold and is the
+// oldest; otherwise the drop result wins, including the zero reset for an
+// emptied database.
+func (ix *Indexer[B, T, E]) mergeFirstIndexed(state, dropState *database.State) {
+	// The drop deleted blocks with timestamps below this boundary; the drop's
+	// state copy preserves the chain timestamp the boundary was derived from.
+	var boundary uint64
+	if dropState.LastChainBlockTimestamp > ix.historyDropInterval {
+		boundary = dropState.LastChainBlockTimestamp - ix.historyDropInterval
+	}
+
+	memSurvives := state.FirstIndexedBlockNumber > 0 && state.FirstIndexedBlockTimestamp >= boundary
+	dropNonEmpty := dropState.FirstIndexedBlockNumber > 0
+
+	if memSurvives && (!dropNonEmpty || state.FirstIndexedBlockNumber <= dropState.FirstIndexedBlockNumber) {
+		return
+	}
+
+	state.FirstIndexedBlockNumber = dropState.FirstIndexedBlockNumber
+	state.FirstIndexedBlockTimestamp = dropState.FirstIndexedBlockTimestamp
 }
 
 // getIterationResults determines the next block range to index, fetches the block
@@ -554,8 +583,9 @@ func updateState[B database.Block, T database.Transaction, E database.Event](
 	newState.LastIndexedBlockNumber = lastIndexedBlock.GetBlockNumber()
 	newState.LastIndexedBlockTimestamp = lastIndexedBlock.GetTimestamp()
 
-	// handle first iteration
-	if state.LastIndexedBlockNumber == 0 {
+	// Set the first indexed block on the first iteration and re-establish it
+	// after a history drop has emptied the database.
+	if state.LastIndexedBlockNumber == 0 || state.FirstIndexedBlockNumber == 0 {
 		firstIndexedBlock := results[0].Block
 		newState.FirstIndexedBlockNumber = firstIndexedBlock.GetBlockNumber()
 		newState.FirstIndexedBlockTimestamp = firstIndexedBlock.GetTimestamp()

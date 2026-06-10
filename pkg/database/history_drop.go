@@ -15,7 +15,9 @@ import (
 const deleteBatchSize = 1000
 
 // DropHistoryIteration deletes blocks and related entities older than the given
-// interval and updates the state to reflect the new first indexed block.
+// interval and updates the state to reflect the new first indexed block. The
+// first-indexed boundary is persisted before any rows are deleted so the stored
+// state never advertises blocks that have already been removed.
 func (db *DB[B, T, E]) DropHistoryIteration(
 	ctx context.Context,
 	state *State,
@@ -29,17 +31,19 @@ func (db *DB[B, T, E]) DropHistoryIteration(
 	newState := *state
 
 	var b B
-	deleteOrder := b.HistoryDropOrder()
+	if err := db.raiseFirstIndexedBoundary(ctx, b, &newState, deleteStart); err != nil {
+		return nil, err
+	}
 
 	// Delete in the order specified by HistoryDropOrder to avoid foreign key constraint violations.
-	for _, entity := range deleteOrder {
+	for _, entity := range b.HistoryDropOrder() {
 		if err := deleteInBatches(ctx, db.g, deleteStart, entity); err != nil {
 			return nil, err
 		}
 	}
 
 	var firstBlock B
-	err := db.g.Order("block_number").First(&firstBlock).Error
+	err := db.g.WithContext(ctx).Order("block_number").First(&firstBlock).Error
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, fmt.Errorf("failed to get first block in the DB: %w", err)
 	}
@@ -48,16 +52,70 @@ func (db *DB[B, T, E]) DropHistoryIteration(
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		newState.FirstIndexedBlockNumber = 0
 		newState.FirstIndexedBlockTimestamp = 0
-
-		return &newState, nil
+	} else {
+		newState.FirstIndexedBlockNumber = firstBlock.GetBlockNumber()
+		newState.FirstIndexedBlockTimestamp = firstBlock.GetTimestamp()
 	}
 
-	newState.FirstIndexedBlockNumber = firstBlock.GetBlockNumber()
-	newState.FirstIndexedBlockTimestamp = firstBlock.GetTimestamp()
+	if err := db.persistHistoryDropState(ctx, &newState); err != nil {
+		return nil, fmt.Errorf("failed to persist state after history drop: %w", err)
+	}
 
 	db.log.Infof("deleted blocks up to index %d", newState.FirstIndexedBlockNumber)
 
 	return &newState, nil
+}
+
+// raiseFirstIndexedBoundary moves the state's first-indexed boundary up to the
+// first block that will survive a drop starting at deleteStart and persists it.
+// When no block survives, the boundary is left unchanged; the reset to zero is
+// persisted after the deletion completes.
+func (db *DB[B, T, E]) raiseFirstIndexedBoundary(ctx context.Context, b B, state *State, deleteStart uint64) error {
+	timestampCol := "timestamp"
+	if d, ok := any(b).(Deletable); ok {
+		timestampCol = d.TimestampField()
+	}
+	if !validColumnName.MatchString(timestampCol) {
+		return fmt.Errorf("invalid column name: %q", timestampCol)
+	}
+
+	var survivor B
+	err := db.g.WithContext(ctx).
+		Where(fmt.Sprintf("%s >= ?", timestampCol), deleteStart).
+		Order("block_number").
+		First(&survivor).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+
+		return fmt.Errorf("failed to get first block surviving the history drop: %w", err)
+	}
+
+	if survivor.GetBlockNumber() <= state.FirstIndexedBlockNumber {
+		return nil
+	}
+
+	state.FirstIndexedBlockNumber = survivor.GetBlockNumber()
+	state.FirstIndexedBlockTimestamp = survivor.GetTimestamp()
+
+	if err := db.persistHistoryDropState(ctx, state); err != nil {
+		return fmt.Errorf("failed to persist state before history drop: %w", err)
+	}
+
+	return nil
+}
+
+// persistHistoryDropState updates only the state columns owned by the history
+// drop, leaving the columns the indexing loop writes concurrently untouched.
+func (db *DB[B, T, E]) persistHistoryDropState(ctx context.Context, state *State) error {
+	return db.g.WithContext(ctx).Model(&State{}).
+		Where("id = ?", state.ID).
+		Updates(map[string]any{
+			"first_indexed_block_number":    state.FirstIndexedBlockNumber,
+			"first_indexed_block_timestamp": state.FirstIndexedBlockTimestamp,
+			"last_history_drop":             state.LastHistoryDrop,
+		}).Error
 }
 
 // Deletable is implemented by entities that support timestamp-based history pruning.

@@ -17,6 +17,7 @@ type mockDB struct {
 	blocks       [][]*dbBlock
 	transactions [][]*dbTransaction
 	states       []*database.State
+	saveErr      error
 }
 
 func (m *mockDB) SaveAllEntities(
@@ -26,9 +27,14 @@ func (m *mockDB) SaveAllEntities(
 	events []*struct{},
 	state *database.State,
 ) error {
+	if m.saveErr != nil {
+		return m.saveErr
+	}
+
 	m.blocks = append(m.blocks, blocks)
 	m.transactions = append(m.transactions, transactions)
-	m.states = append(m.states, state)
+	stateCopy := *state
+	m.states = append(m.states, &stateCopy)
 
 	return nil
 }
@@ -133,6 +139,156 @@ func TestIndexer(t *testing.T) {
 	require.Len(t, db.transactions[0], 3) // Three transactions
 	require.Len(t, db.states, 1)
 	require.Equal(t, state, db.states[0])
+}
+
+func TestPollHistoryDropResults(t *testing.T) {
+	ctx := context.Background()
+
+	newLockedMutex := func() *sync.Mutex {
+		var m sync.Mutex
+		m.Lock() // a running history drop holds the lock until its result is processed
+
+		return &m
+	}
+
+	t.Run("no pending result is a no-op", func(t *testing.T) {
+		db := &mockDB{}
+		ix := Indexer[dbBlock, dbTransaction, struct{}]{db: db, log: logger.Nop{}}
+		state := &database.State{FirstIndexedBlockNumber: 10}
+
+		err := ix.pollHistoryDropResults(ctx, &sync.Mutex{}, make(chan *database.State, 1), state)
+		require.NoError(t, err)
+		require.Equal(t, uint64(10), state.FirstIndexedBlockNumber)
+		require.Empty(t, db.states)
+	})
+
+	t.Run("applies and persists the drop result", func(t *testing.T) {
+		db := &mockDB{}
+		ix := Indexer[dbBlock, dbTransaction, struct{}]{db: db, historyDropInterval: 200, log: logger.Nop{}}
+		lock := newLockedMutex()
+
+		results := make(chan *database.State, 1)
+		results <- &database.State{
+			FirstIndexedBlockNumber:    50,
+			FirstIndexedBlockTimestamp: 50000,
+			LastChainBlockTimestamp:    50200,
+			LastHistoryDrop:            12345,
+		}
+
+		// The in-memory boundary references blocks below the deletion threshold
+		// (50200 - 200), so the drop result must take over.
+		state := &database.State{
+			FirstIndexedBlockNumber:    10,
+			FirstIndexedBlockTimestamp: 10000,
+			LastIndexedBlockNumber:     100,
+		}
+
+		err := ix.pollHistoryDropResults(ctx, lock, results, state)
+		require.NoError(t, err)
+		require.Equal(t, uint64(50), state.FirstIndexedBlockNumber)
+		require.Equal(t, uint64(50000), state.FirstIndexedBlockTimestamp)
+		require.Equal(t, uint64(12345), state.LastHistoryDrop)
+		require.Equal(t, uint64(100), state.LastIndexedBlockNumber)
+
+		require.Len(t, db.states, 1)
+		require.Equal(t, state, db.states[0])
+		require.True(t, lock.TryLock(), "lock must be released after processing the result")
+	})
+
+	t.Run("takes over the zero reset when the drop emptied the database", func(t *testing.T) {
+		db := &mockDB{}
+		ix := Indexer[dbBlock, dbTransaction, struct{}]{db: db, historyDropInterval: 200, log: logger.Nop{}}
+		lock := newLockedMutex()
+
+		results := make(chan *database.State, 1)
+		results <- &database.State{LastChainBlockTimestamp: 15000, LastHistoryDrop: 12345}
+
+		state := &database.State{
+			FirstIndexedBlockNumber:    10,
+			FirstIndexedBlockTimestamp: 10000,
+		}
+
+		err := ix.pollHistoryDropResults(ctx, lock, results, state)
+		require.NoError(t, err)
+		require.Equal(t, uint64(0), state.FirstIndexedBlockNumber)
+		require.Equal(t, uint64(0), state.FirstIndexedBlockTimestamp)
+		require.Len(t, db.states, 1)
+	})
+
+	t.Run("keeps the in-memory boundary when its blocks survive the drop", func(t *testing.T) {
+		// A drop that started before the first blocks were saved reads an empty
+		// table and reports a zero boundary; the blocks indexed meanwhile are
+		// above the deletion threshold and must not be discarded.
+		db := &mockDB{}
+		ix := Indexer[dbBlock, dbTransaction, struct{}]{db: db, historyDropInterval: 200, log: logger.Nop{}}
+		lock := newLockedMutex()
+
+		results := make(chan *database.State, 1)
+		results <- &database.State{LastChainBlockTimestamp: 1000, LastHistoryDrop: 12345}
+
+		state := &database.State{
+			FirstIndexedBlockNumber:    300,
+			FirstIndexedBlockTimestamp: 800,
+			LastIndexedBlockNumber:     399,
+		}
+
+		err := ix.pollHistoryDropResults(ctx, lock, results, state)
+		require.NoError(t, err)
+		require.Equal(t, uint64(300), state.FirstIndexedBlockNumber)
+		require.Equal(t, uint64(800), state.FirstIndexedBlockTimestamp)
+		require.Equal(t, uint64(12345), state.LastHistoryDrop)
+		require.Len(t, db.states, 1)
+	})
+
+	t.Run("takes the older surviving boundary from the drop", func(t *testing.T) {
+		// State loaded from an older run can trail the in-memory boundary; the
+		// drop's fresh database read is authoritative when it is older.
+		db := &mockDB{}
+		ix := Indexer[dbBlock, dbTransaction, struct{}]{db: db, historyDropInterval: 200, log: logger.Nop{}}
+		lock := newLockedMutex()
+
+		results := make(chan *database.State, 1)
+		results <- &database.State{
+			FirstIndexedBlockNumber:    302,
+			FirstIndexedBlockTimestamp: 802,
+			LastChainBlockTimestamp:    1002,
+			LastHistoryDrop:            12345,
+		}
+
+		state := &database.State{
+			FirstIndexedBlockNumber:    305,
+			FirstIndexedBlockTimestamp: 805,
+		}
+
+		err := ix.pollHistoryDropResults(ctx, lock, results, state)
+		require.NoError(t, err)
+		require.Equal(t, uint64(302), state.FirstIndexedBlockNumber)
+		require.Equal(t, uint64(802), state.FirstIndexedBlockTimestamp)
+	})
+
+	t.Run("nil result returns an error", func(t *testing.T) {
+		ix := Indexer[dbBlock, dbTransaction, struct{}]{db: &mockDB{}, log: logger.Nop{}}
+		lock := newLockedMutex()
+
+		results := make(chan *database.State, 1)
+		results <- nil
+
+		err := ix.pollHistoryDropResults(ctx, lock, results, &database.State{})
+		require.Error(t, err)
+		require.True(t, lock.TryLock(), "lock must be released after processing the result")
+	})
+
+	t.Run("save error is propagated", func(t *testing.T) {
+		db := &mockDB{saveErr: errors.New("db down")}
+		ix := Indexer[dbBlock, dbTransaction, struct{}]{db: db, log: logger.Nop{}}
+		lock := newLockedMutex()
+
+		results := make(chan *database.State, 1)
+		results <- &database.State{FirstIndexedBlockNumber: 50}
+
+		err := ix.pollHistoryDropResults(ctx, lock, results, &database.State{})
+		require.ErrorIs(t, err, db.saveErr)
+	})
 }
 
 func TestGetInitialStartBlockNumber(t *testing.T) {
@@ -338,6 +494,21 @@ func TestUpdateState(t *testing.T) {
 		require.Equal(t, uint64(100000), newState.FirstIndexedBlockTimestamp)
 		require.Equal(t, uint64(101), newState.LastIndexedBlockNumber)
 		require.Equal(t, uint64(101000), newState.LastIndexedBlockTimestamp)
+	})
+
+	t.Run("re-establishes first indexed block after a drop emptied the database", func(t *testing.T) {
+		state := &database.State{
+			LastIndexedBlockNumber:  200,
+			FirstIndexedBlockNumber: 0,
+		}
+		results := []BlockResult[dbBlock, dbTransaction, struct{}]{
+			{Block: dbBlock{BlockNumber: 201, Timestamp: 201000}},
+			{Block: dbBlock{BlockNumber: 202, Timestamp: 202000}},
+		}
+
+		newState := updateState(results, state)
+		require.Equal(t, uint64(201), newState.FirstIndexedBlockNumber)
+		require.Equal(t, uint64(201000), newState.FirstIndexedBlockTimestamp)
 	})
 
 	t.Run("does not modify original state", func(t *testing.T) {

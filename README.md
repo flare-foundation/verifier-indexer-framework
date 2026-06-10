@@ -90,7 +90,7 @@ Fetch the latest block number and timestamp from the blockchain node.
 This is retried with exponential backoff on failure.
 2. **Poll history drop results.**
 Check (non-blocking) whether a background history drop has completed.
-If so, apply the updated first-indexed-block state.
+If so, apply the updated first-indexed-block state and persist it immediately.
 3. **Maybe start history drop.**
 If history drop is enabled and enough time has elapsed since the last drop, start a new one in a background goroutine.
 Only one history drop runs at a time.
@@ -124,7 +124,8 @@ When `history_drop` is configured (in seconds), the indexer periodically prunes 
 - Entities are deleted in the order returned by `HistoryDropOrder` to respect foreign key constraints (e.g., transactions and events before blocks).
 - Deletions happen in batches of 1000 rows to avoid long-running database locks.
 - Only one history drop runs at a time — if one is already in progress, the next iteration skips it.
-- On completion, the state is updated with the new first indexed block and the timestamp of the last drop.
+- The first-indexed-block boundary is persisted before any rows are deleted, so the stored state never advertises blocks that have already been removed.
+- On completion, the state is updated and persisted with the new first indexed block and the timestamp of the last drop.
 
 ### Error Handling and Retries
 
