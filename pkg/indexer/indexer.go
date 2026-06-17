@@ -50,6 +50,9 @@ type BlockchainClient[B database.Block, T database.Transaction, E database.Event
 // DB defines the database operations required by the indexer.
 type DB[B database.Block, T database.Transaction, E database.Event] interface {
 	// SaveAllEntities persists blocks, transactions, events, and state atomically.
+	// It establishes the first-indexed boundary only from the empty sentinel and
+	// never lowers it, so a regular save cannot overwrite a boundary a concurrent
+	// history drop raised.
 	SaveAllEntities(
 		ctx context.Context,
 		blocks []*B,
@@ -57,6 +60,10 @@ type DB[B database.Block, T database.Transaction, E database.Event] interface {
 		events []*E,
 		state *database.State,
 	) error
+	// SaveState persists the full state row authoritatively, used when the caller
+	// holds the authoritative first-indexed boundary (applying a history drop
+	// result or resuming past unindexed blocks).
+	SaveState(ctx context.Context, state *database.State) error
 	// GetState retrieves the current indexer state.
 	GetState(ctx context.Context) (*database.State, error)
 	// DropHistoryIteration deletes entities older than the given interval.
@@ -218,7 +225,7 @@ func (ix *Indexer[B, T, E]) getInitialStartBlockNumber(ctx context.Context, stat
 		state.FirstIndexedBlockNumber = historyDropStartBlock
 		state.FirstIndexedBlockTimestamp = firstBlockTime
 
-		if err := ix.db.SaveAllEntities(ctx, nil, nil, nil, state); err != nil {
+		if err := ix.db.SaveState(ctx, state); err != nil {
 			return 0, fmt.Errorf("failed to persist state when resuming past unindexed blocks: %w", err)
 		}
 
@@ -395,10 +402,12 @@ func (ix *Indexer[B, T, E]) pollHistoryDropResults(
 		state.LastHistoryDrop = newState.LastHistoryDrop
 		ix.mergeFirstIndexed(state, newState)
 
-		// Persist immediately: the next regular save runs only when new blocks
-		// arrive, and an iteration that was in flight while the drop finished may
-		// have overwritten the columns persisted by the drop with stale values.
-		if err := ix.db.SaveAllEntities(ctx, nil, nil, nil, state); err != nil {
+		// Persist the authoritative boundary immediately with SaveState (a full
+		// write): the next regular save runs only when new blocks arrive, and a
+		// regular save can only ever raise the boundary from zero, so it cannot
+		// move it to the value computed here — including a reset back to zero
+		// when the drop emptied the database.
+		if err := ix.db.SaveState(ctx, state); err != nil {
 			return fmt.Errorf("failed to save state after history drop: %w", err)
 		}
 

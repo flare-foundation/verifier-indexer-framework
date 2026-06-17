@@ -41,6 +41,17 @@ func (m *mockDB) SaveAllEntities(
 	return nil
 }
 
+func (m *mockDB) SaveState(ctx context.Context, state *database.State) error {
+	if m.saveErr != nil {
+		return m.saveErr
+	}
+
+	stateCopy := *state
+	m.states = append(m.states, &stateCopy)
+
+	return nil
+}
+
 func (m mockDB) GetState(ctx context.Context) (*database.State, error) {
 	return &database.State{}, nil
 }

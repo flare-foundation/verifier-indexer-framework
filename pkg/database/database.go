@@ -184,10 +184,18 @@ func (db *DB[B, T, E]) GetState(ctx context.Context) (*State, error) {
 }
 
 // SaveAllEntities persists blocks, transactions, events, and indexer state in a
-// single database transaction. Rows that already exist are overwritten: entity
-// rows are deterministically derived from immutable chain data, so re-indexing
+// single database transaction. Entity rows that already exist are overwritten:
+// they are deterministically derived from immutable chain data, so re-indexing
 // a range repairs values previously derived by older code instead of freezing
 // them forever.
+//
+// The state row is upserted so the indexing loop only ever writes the columns
+// it owns. On conflict it updates the chain- and last-indexed-progress columns
+// and establishes the first-indexed boundary only from the empty sentinel
+// (raise-only), never lowering an already-set boundary and never touching
+// last_history_drop. This keeps a regular save from clobbering a boundary that
+// a concurrent history drop raised (and persisted) before deleting rows below
+// it; callers holding the authoritative boundary use SaveState instead.
 func (db *DB[B, T, E]) SaveAllEntities(
 	ctx context.Context, blocks []*B, transactions []*T, events []*E, state *State,
 ) error {
@@ -220,7 +228,10 @@ func (db *DB[B, T, E]) SaveAllEntities(
 		}
 
 		if state != nil {
-			err := tx.Save(state).Error
+			err := tx.Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "id"}},
+				DoUpdates: indexingStateAssignments(),
+			}).Create(state).Error
 			if err != nil {
 				return err
 			}
@@ -228,6 +239,38 @@ func (db *DB[B, T, E]) SaveAllEntities(
 
 		return nil
 	})
+}
+
+// indexingStateAssignments returns the ON CONFLICT update set used by the
+// indexing loop for the singleton state row. It writes the chain- and
+// last-indexed-progress columns the loop owns, raises the first-indexed
+// boundary only from the empty sentinel (so a stale carried-forward value can
+// never overwrite a higher boundary persisted by a concurrent history drop),
+// and deliberately omits last_history_drop, which the history drop owns.
+//
+// The first-indexed CASE qualifies the existing-row reference with the "states"
+// table name (the gorm-derived table for State): inside ON CONFLICT DO UPDATE an
+// unqualified column is ambiguous between the target row and excluded.
+func indexingStateAssignments() clause.Set {
+	return clause.Assignments(map[string]any{
+		"last_chain_block_number":      gorm.Expr("excluded.last_chain_block_number"),
+		"last_chain_block_timestamp":   gorm.Expr("excluded.last_chain_block_timestamp"),
+		"last_chain_block_updated":     gorm.Expr("excluded.last_chain_block_updated"),
+		"last_indexed_block_number":    gorm.Expr("excluded.last_indexed_block_number"),
+		"last_indexed_block_timestamp": gorm.Expr("excluded.last_indexed_block_timestamp"),
+		"last_indexed_block_updated":   gorm.Expr("excluded.last_indexed_block_updated"),
+		"first_indexed_block_number": gorm.Expr(
+			"CASE WHEN states.first_indexed_block_number = 0 THEN excluded.first_indexed_block_number ELSE states.first_indexed_block_number END"),
+		"first_indexed_block_timestamp": gorm.Expr(
+			"CASE WHEN states.first_indexed_block_number = 0 THEN excluded.first_indexed_block_timestamp ELSE states.first_indexed_block_timestamp END"),
+	})
+}
+
+// SaveState overwrites every column of the state row. Only for callers holding
+// the authoritative first-indexed boundary, where SaveAllEntities' raise-only
+// guard must not apply.
+func (db *DB[B, T, E]) SaveState(ctx context.Context, state *State) error {
+	return db.g.WithContext(ctx).Save(state).Error
 }
 
 // SaveVersion persists the given version record to the database.
