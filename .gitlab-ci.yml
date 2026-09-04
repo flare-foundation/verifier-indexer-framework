@@ -2,6 +2,7 @@ variables:
   GOPATH: /go
   GOLANG_VERSION: "1.26.8"
   GOLINT_VERSION: "v2.11.4"
+  GOVULNCHECK_VERSION: "v1.6.0"
   COVERAGE_FILE: "coverage.out"
   COBERTURA_FILE: "coverage.xml"
 
@@ -36,6 +37,16 @@ lint:
     - "! gofmt -l . | grep -q ."
     - golangci-lint run --timeout 5m0s
 
+# Non-gating: the vulnerability database grows, so an unchanged branch can start failing.
+vulncheck:
+  stage: test
+  needs: [build]
+  image: golang:${GOLANG_VERSION}
+  cache: !reference [.gocache]
+  allow_failure: true
+  script:
+    - go run golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION} ./...
+
 test:
   stage: test
   image: golang:${GOLANG_VERSION}
@@ -50,7 +61,8 @@ test:
   services:
     - postgres:latest
   script:
-    - go test --tags=integration -coverpkg=./... -coverprofile=${COVERAGE_FILE} ./...
+    # -p 1: integration tests share one Postgres and the singleton state row.
+    - go test -p 1 -race --tags=integration -coverpkg=./... -coverprofile=${COVERAGE_FILE} ./...
     - go tool cover -func=${COVERAGE_FILE}
     - go run github.com/boumenot/gocover-cobertura < ${COVERAGE_FILE} > ${COBERTURA_FILE}
   artifacts:
