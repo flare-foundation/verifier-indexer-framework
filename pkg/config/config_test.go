@@ -172,3 +172,49 @@ func TestReadFileRejectsUnknownKeys(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckHealth(t *testing.T) {
+	validHealth := func() *Base {
+		return &Base{
+			Indexer: Indexer{Confirmations: 12, MaxBlockRange: 100, MaxConcurrency: 4},
+			Timeout: TimeoutConfig{BackoffMaxElapsedTimeSeconds: 300, RequestTimeoutMillis: 3000},
+			Health:  defaultHealth,
+		}
+	}
+
+	// enabling by accident would open a port on every existing consumer
+	require.False(t, DefaultBase.Health.Enabled)
+
+	t.Run("disabled ignores its own values", func(t *testing.T) {
+		cfg := validHealth()
+		cfg.Health = Health{ListenAddress: "", CacheMillis: -1, MaxBlockLag: 1}
+		require.NoError(t, CheckParameters(cfg))
+	})
+
+	t.Run("enabled with defaults passes", func(t *testing.T) {
+		cfg := validHealth()
+		cfg.Health.Enabled = true
+		require.NoError(t, CheckParameters(cfg))
+	})
+
+	t.Run("enabled without a listen address", func(t *testing.T) {
+		cfg := validHealth()
+		cfg.Health.Enabled = true
+		cfg.Health.ListenAddress = ""
+		require.ErrorContains(t, CheckParameters(cfg), "listen_address")
+	})
+
+	t.Run("negative cache interval", func(t *testing.T) {
+		cfg := validHealth()
+		cfg.Health.Enabled = true
+		cfg.Health.CacheMillis = -1
+		require.ErrorContains(t, CheckParameters(cfg), "cache_millis")
+	})
+
+	t.Run("lag allowance below confirmations can never be met", func(t *testing.T) {
+		cfg := validHealth()
+		cfg.Health.Enabled = true
+		cfg.Health.MaxBlockLag = 5
+		require.ErrorContains(t, CheckParameters(cfg), "max_block_lag")
+	})
+}

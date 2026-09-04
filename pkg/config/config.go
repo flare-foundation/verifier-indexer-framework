@@ -22,6 +22,7 @@ type Base struct {
 	DB      DB            `toml:"db"`
 	Indexer Indexer       `toml:"indexer"`
 	Timeout TimeoutConfig `toml:"timeout"`
+	Health  Health        `toml:"health"`
 	Logger  logger.Config `toml:"logger"`
 }
 
@@ -29,7 +30,29 @@ var DefaultBase = Base{
 	DB:      defaultDB,
 	Indexer: defaultIndexer,
 	Timeout: defaultTimeout,
+	Health:  defaultHealth,
 	Logger:  logger.DefaultConfig(),
+}
+
+// Health configures the optional readiness endpoint. Its zero value leaves the
+// endpoint disabled, so no port is opened unless enabled is set.
+type Health struct {
+	Enabled       bool   `toml:"enabled"`
+	ListenAddress string `toml:"listen_address"`
+	// MaxBlockLag of zero derives confirmations + max_block_range: one full
+	// iteration behind the confirmed head.
+	MaxBlockLag uint64 `toml:"max_block_lag"`
+	// MaxProgressAgeSeconds of zero derives twice the worst-case iteration
+	// duration; zero never disables a check.
+	MaxProgressAgeSeconds uint64 `toml:"max_progress_age_seconds"`
+	// CacheMillis bounds how often a request reaches the database; zero reads it
+	// on every request.
+	CacheMillis int `toml:"cache_millis"`
+}
+
+var defaultHealth = Health{
+	ListenAddress: ":8080",
+	CacheMillis:   1000,
 }
 
 type DB struct {
@@ -160,6 +183,20 @@ func CheckParameters(cfg *Base) error {
 
 	if cfg.Indexer.EndBlockNumber != 0 && cfg.Indexer.EndBlockNumber < cfg.Indexer.StartBlockNumber {
 		return errors.New("end_block_number must be greater than or equal to start_block_number")
+	}
+
+	if cfg.Health.Enabled {
+		if cfg.Health.ListenAddress == "" {
+			return errors.New("listen_address must be set when health is enabled")
+		}
+
+		if cfg.Health.CacheMillis < 0 {
+			return errors.New("cache_millis must not be negative")
+		}
+
+		if cfg.Health.MaxBlockLag != 0 && cfg.Health.MaxBlockLag < cfg.Indexer.Confirmations {
+			return errors.New("max_block_lag must be at least confirmations")
+		}
 	}
 
 	return nil

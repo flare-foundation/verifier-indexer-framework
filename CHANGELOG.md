@@ -7,6 +7,8 @@
 - `indexer.ErrBlockNotFound` sentinel: `BlockchainClient` implementations must return it (wrapped) for blocks genuinely missing on the node. Not-found errors are never retried, and only they may move the start block during history drop start-up; any other startup probe failure now aborts instead of silently raising the start block.
 - `indexer.ErrInvalidData` sentinel for deterministic processing failures (e.g. a transaction in a validated block that fails to parse). Such errors abort the indexer immediately with a clear error instead of being retried through the full backoff window before each crash.
 
+- Optional readiness endpoint: with `[health] enabled = true` the framework serves `GET /health` on `listen_address` (default `:8080`), returning 200 when the advertised indexed range is current and 503 with a JSON status otherwise. Off by default — no port is opened, no goroutine starts and no code path changes unless it is enabled. The predicate is exported as `health.Handler` for consumers wiring their own stack.
+
 ### Changed
 
 - **Breaking:** require Go 1.26.8 (go directive and CI image); `github.com/jackc/pgx/v5` v5.9.2 and `golang.org/x/text` v0.39.0. Earlier toolchains and these earlier dependency versions carry reachable vulnerabilities (`GO-2026-5856`, `GO-2026-5972`, `GO-2026-5004`, `GO-2026-5970`). Consumers must raise their own `go` directive to build. CI now runs `govulncheck` as a non-gating job.

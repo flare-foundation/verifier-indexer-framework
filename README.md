@@ -52,6 +52,11 @@ For an example of how to integrate please see the `cmd/example` directory.
 - Handles `SIGINT`/`SIGTERM` for graceful shutdown.
 - Optionally stops at a configured `end_block_number`.
 
+### Health Endpoint (`pkg/health`, optional)
+
+- Serves `GET /health` when `[health] enabled = true`; off by default, so nothing listens and no query is issued unless you turn it on.
+- Answers 200 when the advertised range is current and 503 with a JSON status otherwise.
+
 ### Framework Entrypoint (`pkg/framework`)
 
 - Parses CLI arguments.
@@ -146,6 +151,37 @@ Retry waits and the wait between polls when the indexer is caught up both observ
 The indexer listens for `SIGINT` and `SIGTERM`.
 On receiving either signal it cancels the context, which interrupts any retry or up-to-date wait in progress and lets the current iteration stop cleanly.
 A signal-initiated shutdown is not an error: `framework.Run` returns `nil`, so the process exits zero.
+
+### Health Endpoint
+
+Off by default. With no `[health]` table nothing listens, no goroutine starts, and no extra query is issued.
+
+`GET /health` (and `HEAD`) returns 200 when the indexer is ready and 503 otherwise, with a JSON body. Other methods get 405, other paths 404.
+
+The predicate is evaluated top-down; the first match wins:
+
+| Status | Meaning |
+|---|---|
+| `unavailable` | The indexer state could not be read. |
+| `initializing` | The advertised range is empty (`first == 0` or `first > last`). |
+| `catching_up` | The chain head is more than `max_block_lag` ahead of the last indexed block. |
+| `stalled` | Confirmed blocks are pending *and* the last progress write is older than `max_progress_age_seconds`. |
+| `ready` | None of the above. |
+
+Both allowances derive from configuration you already set when left at zero: `max_block_lag` becomes `confirmations + max_block_range` (one full iteration behind the confirmed head), and `max_progress_age_seconds` becomes twice the worst-case iteration, `ceil(max_block_range / max_concurrency) x request_timeout_millis`. Lower `max_concurrency` therefore *lengthens* the allowance, because an iteration can legitimately take longer. The effective values are echoed in every response, so you can read your real steady-state lag off the endpoint and tighten from there.
+
+The `stalled` check is deliberately gated on the lag exceeding `confirmations`. A caught-up indexer persists nothing between polls, so its progress stamp ages even though nothing is wrong; without the gate the check would fire on any quiet chain.
+
+Kubernetes: use `readinessProbe` and `startupProbe`, and **no `livenessProbe`**. The indexer exits on a persistent error, so the container runtime's restart-on-exit already is the liveness mechanism, and a legitimate backfill answers 503 for its whole duration — a liveness probe would restart-loop the pod. A bounded run (`end_block_number` set) is behind its own end block throughout, so leave the endpoint disabled for such jobs.
+
+Two operational cautions:
+
+- **Alert on `ready` or the status code, never on a number alone.** The block and age fields read `0` when the status is `unavailable`.
+- The port is unauthenticated and `:8080` binds all interfaces. Restrict it with a network policy, or set `listen_address` to a specific interface. Loopback is not the default because a kubelet `httpGet` probe targets the pod IP.
+
+Known blind spot: a node outage while the indexer is *caught up* is invisible here, because nothing in the state row moves — the lag stays at `confirmations` and the gate stays shut. For a client that honours context this is bounded (the retry window expires and the process exits), but a client that ignores cancellation can hang indefinitely and the endpoint will keep answering 200.
+
+`verifier-indexer-api`'s `GET /api/health` is a different service on a different port: it returns the state row with no predicate, answering what data it can serve rather than whether this indexer is caught up.
 
 ## What You Must Implement
 
@@ -322,6 +358,13 @@ end_block_number = 0                # Stop after this block; 0 = run forever
 [timeout]
 backoff_max_elapsed_time_seconds = 300   # Max total retry time (default: 300)
 request_timeout_millis = 3000            # Per-request timeout (default: 3000)
+
+[health]
+enabled = false                          # Opt-in readiness endpoint; nothing listens unless true
+listen_address = ":8080"                 # Listen address (default ":8080"); binds all interfaces
+max_block_lag = 0                        # Max tolerated lag behind the chain head; 0 derives confirmations + max_block_range
+max_progress_age_seconds = 0             # Max age of the last progress write; 0 derives twice the worst-case iteration
+cache_millis = 1000                      # Min interval between database reads (default: 1000); 0 reads every request
 
 [logger]
 level = "DEBUG"                          # DEBUG, INFO, WARN, ERROR, DPANIC, PANIC or FATAL (default: DEBUG)

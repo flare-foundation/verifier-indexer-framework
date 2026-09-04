@@ -115,8 +115,19 @@ func runWithArgs[B database.Block, C config.EnvOverrideable, T database.Transact
 
 	ix := indexer.New(&cfg.Base, db, bc, log)
 
+	run := ix.Run
+	if cfg.Health.Enabled {
+		hs, err := newHealthServer(&cfg.Base, db, log)
+		if err != nil {
+			return err
+		}
+
+		// Joined here so no handler outlives the deferred db.Close.
+		run = func(ctx context.Context) error { return runPair(ctx, ix.Run, hs.run) }
+	}
+
 	// Cancellation is the documented way to shut down, so it must not exit non-zero.
-	if err := ix.Run(ctx); !errors.Is(err, context.Canceled) {
+	if err := run(ctx); !errors.Is(err, context.Canceled) {
 		return err
 	}
 
