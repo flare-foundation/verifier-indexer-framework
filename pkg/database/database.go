@@ -111,6 +111,14 @@ func New[B Block, T Transaction, E Event](cfg *config.DB, entities ExternalEntit
 		return nil, err
 	}
 
+	// Reject an unusable block entity now, not a retention window from now.
+	if cfg.HistoryDrop > 0 {
+		if _, err := blockTimestampField(*new(B)); err != nil {
+			closeOnError()
+			return nil, err
+		}
+	}
+
 	return &DB[B, T, E]{g: db, log: log, conflicts: conflicts}, nil
 }
 

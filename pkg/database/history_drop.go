@@ -16,8 +16,8 @@ const deleteBatchSize = 1000
 
 // DropHistoryIteration deletes blocks and related entities older than the given
 // interval and updates the state to reflect the new first indexed block. The
-// first-indexed boundary is persisted before any rows are deleted so the stored
-// state never advertises blocks that have already been removed.
+// first-indexed boundary is persisted before any rows are deleted — emptied when
+// nothing survives — so stored state never advertises removed blocks.
 func (db *DB[B, T, E]) DropHistoryIteration(
 	ctx context.Context,
 	state *State,
@@ -62,7 +62,7 @@ func (db *DB[B, T, E]) DropHistoryIteration(
 		// so the boundary is not lowered onto them.
 	}
 
-	if err := db.persistHistoryDropState(ctx, &newState); err != nil {
+	if err := db.persistHistoryDropState(ctx, &newState, nil); err != nil {
 		return nil, fmt.Errorf("failed to persist state after history drop: %w", err)
 	}
 
@@ -71,56 +71,101 @@ func (db *DB[B, T, E]) DropHistoryIteration(
 	return &newState, nil
 }
 
-// raiseFirstIndexedBoundary moves the state's first-indexed boundary up to the
-// first block that will survive a drop starting at deleteStart and persists it.
-// When no block survives, the boundary is left unchanged; the reset to zero is
-// persisted after the deletion completes.
+// raiseFirstIndexedBoundary moves the boundary to the first block surviving a
+// drop at deleteStart and persists it before any row is deleted. When nothing
+// survives it is emptied: under-advertising is safe, over-advertising is not.
 func (db *DB[B, T, E]) raiseFirstIndexedBoundary(ctx context.Context, b B, state *State, deleteStart uint64) error {
-	timestampCol := "timestamp"
-	if d, ok := any(b).(Deletable); ok {
-		timestampCol = d.TimestampField()
-	}
-	if !validColumnName.MatchString(timestampCol) {
-		return fmt.Errorf("invalid column name: %q", timestampCol)
+	timestampCol, err := blockTimestampField(b)
+	if err != nil {
+		return err
 	}
 
+	prior := state.FirstIndexedBlockNumber
+
 	var survivor B
-	err := db.g.WithContext(ctx).
+	err = db.g.WithContext(ctx).
 		Where(fmt.Sprintf("%s >= ?", timestampCol), deleteStart).
 		Order("block_number").
 		First(&survivor).Error
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("failed to get first block surviving the history drop: %w", err)
+		}
+
+		state.FirstIndexedBlockNumber = 0
+		state.FirstIndexedBlockTimestamp = 0
+	} else {
+		if survivor.GetBlockNumber() <= state.FirstIndexedBlockNumber {
 			return nil
 		}
 
-		return fmt.Errorf("failed to get first block surviving the history drop: %w", err)
+		state.FirstIndexedBlockNumber = survivor.GetBlockNumber()
+		state.FirstIndexedBlockTimestamp = survivor.GetTimestamp()
 	}
 
-	if survivor.GetBlockNumber() <= state.FirstIndexedBlockNumber {
-		return nil
-	}
-
-	state.FirstIndexedBlockNumber = survivor.GetBlockNumber()
-	state.FirstIndexedBlockTimestamp = survivor.GetTimestamp()
-
-	if err := db.persistHistoryDropState(ctx, state); err != nil {
+	if err := db.persistHistoryDropState(ctx, state, &prior); err != nil {
 		return fmt.Errorf("failed to persist state before history drop: %w", err)
 	}
 
 	return nil
 }
 
+// blockTimestampField returns the block entity's timestamp column. Only B's
+// value method set counts, so a pointer-receiver TimestampField is reported
+// rather than guessed at.
+func blockTimestampField[B Block](b B) (string, error) {
+	d, ok := any(b).(Deletable)
+	if !ok {
+		return "", fmt.Errorf(
+			"block entity %T does not implement database.Deletable: "+
+				"declare TimestampField on the type used to instantiate the framework", b,
+		)
+	}
+
+	col := d.TimestampField()
+	if !validColumnName.MatchString(col) {
+		return "", fmt.Errorf("invalid column name: %q", col)
+	}
+
+	return col, nil
+}
+
 // persistHistoryDropState updates only the state columns owned by the history
 // drop, leaving the columns the indexing loop writes concurrently untouched.
-func (db *DB[B, T, E]) persistHistoryDropState(ctx context.Context, state *State) error {
-	return db.g.WithContext(ctx).Model(&State{}).
+//
+// When prior is non-nil the boundary moves only while the stored value still
+// matches it, so a boundary the loop established meanwhile survives.
+// last_history_drop is always written; skipping it would retrigger the drop.
+func (db *DB[B, T, E]) persistHistoryDropState(ctx context.Context, state *State, prior *uint64) error {
+	firstNumber := any(state.FirstIndexedBlockNumber)
+	firstTimestamp := any(state.FirstIndexedBlockTimestamp)
+
+	if prior != nil {
+		firstNumber = gorm.Expr(
+			"CASE WHEN states.first_indexed_block_number = ? THEN ? ELSE states.first_indexed_block_number END",
+			*prior, state.FirstIndexedBlockNumber)
+		firstTimestamp = gorm.Expr(
+			"CASE WHEN states.first_indexed_block_number = ? THEN ? ELSE states.first_indexed_block_timestamp END",
+			*prior, state.FirstIndexedBlockTimestamp)
+	}
+
+	result := db.g.WithContext(ctx).Model(&State{}).
 		Where("id = ?", state.ID).
 		Updates(map[string]any{
-			"first_indexed_block_number":    state.FirstIndexedBlockNumber,
-			"first_indexed_block_timestamp": state.FirstIndexedBlockTimestamp,
+			"first_indexed_block_number":    firstNumber,
+			"first_indexed_block_timestamp": firstTimestamp,
 			"last_history_drop":             state.LastHistoryDrop,
-		}).Error
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+
+	// A fresh database has no state row until the first save inserts it.
+	if result.RowsAffected == 0 {
+		db.log.Warnf("history drop found no state row %d to update; nothing is advertised as indexed yet", state.ID)
+	}
+
+	return nil
 }
 
 // Deletable is implemented by entities that support timestamp-based history pruning.

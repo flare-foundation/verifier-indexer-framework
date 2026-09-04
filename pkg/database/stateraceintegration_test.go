@@ -11,16 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// raceBlock is a minimal Block implementation for exercising the state writers.
-type raceBlock struct {
-	BlockNumber uint64 `gorm:"primaryKey"`
-	Timestamp   uint64
-}
-
-func (b raceBlock) GetBlockNumber() uint64        { return b.BlockNumber }
-func (b raceBlock) GetTimestamp() uint64          { return b.Timestamp }
-func (b raceBlock) HistoryDropOrder() []Deletable { return nil }
-
 // TestStateWriterColumnOwnership verifies that the indexing loop's SaveAllEntities
 // and the history drop's persistHistoryDropState do not clobber each other's
 // columns on the singleton state row, and that SaveState writes authoritatively.
@@ -31,7 +21,7 @@ func TestStateWriterColumnOwnership(t *testing.T) {
 	require.NoError(t, g.Migrator().DropTable(&State{}))
 	require.NoError(t, g.AutoMigrate(&State{}))
 
-	db := &DB[raceBlock, struct{}, struct{}]{g: g, log: logger.Nop{}}
+	db := &DB[dropBlock, struct{}, struct{}]{g: g, log: logger.Nop{}}
 	ctx := context.Background()
 
 	// The first save creates the row and establishes the boundary at 100.
@@ -53,7 +43,7 @@ func TestStateWriterColumnOwnership(t *testing.T) {
 		FirstIndexedBlockNumber:    5000,
 		FirstIndexedBlockTimestamp: 50000,
 		LastHistoryDrop:            777,
-	}))
+	}, nil))
 
 	// A steady-state save still carrying the stale low boundary must advance the
 	// progress columns without lowering the raised boundary or touching
@@ -76,7 +66,7 @@ func TestStateWriterColumnOwnership(t *testing.T) {
 
 	// After a drop empties the database and resets the boundary to zero, the next
 	// regular save re-establishes it from the empty sentinel.
-	require.NoError(t, db.persistHistoryDropState(ctx, &State{ID: globalStateID, LastHistoryDrop: 888}))
+	require.NoError(t, db.persistHistoryDropState(ctx, &State{ID: globalStateID, LastHistoryDrop: 888}, nil))
 
 	require.NoError(t, db.SaveAllEntities(ctx, nil, nil, nil, &State{
 		ID:                         globalStateID,
