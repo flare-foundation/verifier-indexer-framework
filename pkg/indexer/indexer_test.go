@@ -15,10 +15,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// mockDB models the real state-write semantics rather than recording calls, so
+// a test can tell the raise-only indexing save apart from the authoritative
+// SaveState. `states` remains the call log; `stored` is the modelled row.
 type mockDB struct {
 	blocks       [][]*dbBlock
 	transactions [][]*dbTransaction
 	states       []*database.State
+	stored       *database.State
 	saveErr      error
 }
 
@@ -35,10 +39,40 @@ func (m *mockDB) SaveAllEntities(
 
 	m.blocks = append(m.blocks, blocks)
 	m.transactions = append(m.transactions, transactions)
+
+	if state == nil {
+		return nil
+	}
+
 	stateCopy := *state
 	m.states = append(m.states, &stateCopy)
+	m.applyIndexingSave(state)
 
 	return nil
+}
+
+// applyIndexingSave mirrors indexingStateAssignments: the loop's own progress
+// columns are written, the first-indexed boundary is established only from the
+// empty sentinel, and last_history_drop belongs to the history drop.
+func (m *mockDB) applyIndexingSave(state *database.State) {
+	if m.stored == nil {
+		stored := *state
+		m.stored = &stored
+
+		return
+	}
+
+	m.stored.LastChainBlockNumber = state.LastChainBlockNumber
+	m.stored.LastChainBlockTimestamp = state.LastChainBlockTimestamp
+	m.stored.LastChainBlockUpdated = state.LastChainBlockUpdated
+	m.stored.LastIndexedBlockNumber = state.LastIndexedBlockNumber
+	m.stored.LastIndexedBlockTimestamp = state.LastIndexedBlockTimestamp
+	m.stored.LastIndexedBlockUpdated = state.LastIndexedBlockUpdated
+
+	if m.stored.FirstIndexedBlockNumber == 0 {
+		m.stored.FirstIndexedBlockNumber = state.FirstIndexedBlockNumber
+		m.stored.FirstIndexedBlockTimestamp = state.FirstIndexedBlockTimestamp
+	}
 }
 
 func (m *mockDB) SaveState(ctx context.Context, state *database.State) error {
@@ -49,19 +83,31 @@ func (m *mockDB) SaveState(ctx context.Context, state *database.State) error {
 	stateCopy := *state
 	m.states = append(m.states, &stateCopy)
 
+	stored := *state
+	m.stored = &stored
+
 	return nil
 }
 
-func (m mockDB) GetState(ctx context.Context) (*database.State, error) {
-	return &database.State{}, nil
+func (m *mockDB) GetState(ctx context.Context) (*database.State, error) {
+	if m.stored == nil {
+		return &database.State{}, nil
+	}
+
+	stored := *m.stored
+
+	return &stored, nil
 }
 
-func (m mockDB) DropHistoryIteration(
+func (m *mockDB) DropHistoryIteration(
 	ctx context.Context,
 	state *database.State,
 	intervalSeconds, lastBlockTime uint64,
 ) (*database.State, error) {
-	return state, nil
+	newState := *state
+	newState.LastHistoryDrop = lastBlockTime
+
+	return &newState, nil
 }
 
 type dbBlock struct {
@@ -439,7 +485,13 @@ func TestGetInitialStartBlockNumber(t *testing.T) {
 	})
 
 	t.Run("resume past unindexed blocks moves and persists the coverage boundary", func(t *testing.T) {
-		db := &mockDB{}
+		// The stored row already carries a boundary, so only an authoritative
+		// write can move it: the raise-only indexing save cannot.
+		db := &mockDB{stored: &database.State{
+			LastIndexedBlockNumber:     50,
+			FirstIndexedBlockNumber:    10,
+			FirstIndexedBlockTimestamp: 100,
+		}}
 		ix := newHistoryDropIndexer(db)
 
 		// Last indexed block 50 is far behind the history window start (80):
@@ -458,6 +510,8 @@ func TestGetInitialStartBlockNumber(t *testing.T) {
 
 		require.Len(t, db.states, 1, "moved boundary must be persisted before indexing begins")
 		require.Equal(t, &state, db.states[0])
+		require.Equal(t, uint64(80), db.stored.FirstIndexedBlockNumber,
+			"the boundary must reach the stored row, which a raise-only save cannot do")
 	})
 }
 
