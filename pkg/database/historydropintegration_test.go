@@ -4,13 +4,11 @@ package database
 
 import (
 	"context"
-	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/flare-foundation/verifier-indexer-framework/pkg/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -48,16 +46,7 @@ type prunable struct {
 func (p prunable) TimestampField() string { return "timestamp" }
 
 func TestDeleteInBatches(t *testing.T) {
-	cfgPath := os.Getenv("CONFIG_FILE")
-	if cfgPath == "" {
-		cfgPath = testConfigFile
-	}
-
-	cfg := config.Base{}
-	require.NoError(t, config.ReadFile(cfgPath, &cfg))
-	require.NoError(t, cfg.ApplyEnvOverrides())
-
-	db, err := Connect(&cfg.DB)
+	db, err := Connect(conflictTestDB(t))
 	require.NoError(t, err)
 
 	require.NoError(t, db.Migrator().DropTable(&prunable{}))

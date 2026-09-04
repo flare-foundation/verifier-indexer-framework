@@ -4,10 +4,8 @@ package database
 
 import (
 	"context"
-	"os"
 	"testing"
 
-	"github.com/flare-foundation/verifier-indexer-framework/pkg/config"
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -27,16 +25,7 @@ func (b raceBlock) HistoryDropOrder() []Deletable { return nil }
 // and the history drop's persistHistoryDropState do not clobber each other's
 // columns on the singleton state row, and that SaveState writes authoritatively.
 func TestStateWriterColumnOwnership(t *testing.T) {
-	cfgPath := os.Getenv("CONFIG_FILE")
-	if cfgPath == "" {
-		cfgPath = testConfigFile
-	}
-
-	cfg := config.Base{}
-	require.NoError(t, config.ReadFile(cfgPath, &cfg))
-	require.NoError(t, cfg.ApplyEnvOverrides())
-
-	g, err := Connect(&cfg.DB)
+	g, err := Connect(conflictTestDB(t))
 	require.NoError(t, err)
 
 	require.NoError(t, g.Migrator().DropTable(&State{}))

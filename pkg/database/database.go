@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/config"
@@ -32,8 +33,9 @@ type ExternalEntities[B Block, T Transaction, E Event] struct {
 
 // DB wraps a gorm.DB connection with generic type parameters for block, transaction, and event entities.
 type DB[B Block, T Transaction, E Event] struct {
-	g   *gorm.DB
-	log logger.Logger
+	g         *gorm.DB
+	log       logger.Logger
+	conflicts entityConflicts
 }
 
 // Close closes the underlying database connection.
@@ -103,7 +105,54 @@ func New[B Block, T Transaction, E Event](cfg *config.DB, entities ExternalEntit
 
 	log.Debug("migrated DB entities")
 
-	return &DB[B, T, E]{g: db, log: log}, nil
+	conflicts, err := deriveConflicts[B, T, E](db, log)
+	if err != nil {
+		closeOnError()
+		return nil, err
+	}
+
+	return &DB[B, T, E]{g: db, log: log, conflicts: conflicts}, nil
+}
+
+// deriveConflicts builds each entity's ON CONFLICT clause, rejecting one the
+// framework cannot persist. Runs after AutoMigrate: same schema it validated.
+func deriveConflicts[B Block, T Transaction, E Event](db *gorm.DB, log logger.Logger) (entityConflicts, error) {
+	var conflicts entityConflicts
+
+	type namedModel struct {
+		name   string
+		model  any
+		target *clause.OnConflict
+	}
+
+	entities := []namedModel{
+		{"block", new(B), &conflicts.block},
+		{"transaction", new(T), &conflicts.transaction},
+	}
+
+	// An empty event type has no table; see SaveAllEntities.
+	if !isEmptyStruct[E]() {
+		entities = append(entities, namedModel{"event", new(E), &conflicts.event})
+	}
+
+	for _, entity := range entities {
+		conflict, unmatched, err := overwriteConflict(db.NamingStrategy, entity.model)
+		if err != nil {
+			return entityConflicts{}, fmt.Errorf("%s entity: %w", entity.name, err)
+		}
+
+		if len(unmatched) != 0 {
+			log.Warnf(
+				"%s entity has unique constraints the primary-key conflict target cannot arbitrate (%s): "+
+					"re-indexing a range will fail with a unique violation instead of overwriting rows",
+				entity.name, strings.Join(unmatched, ", "),
+			)
+		}
+
+		*entity.target = conflict
+	}
+
+	return conflicts, nil
 }
 
 // isEmptyStruct reports whether the type parameter T is struct{}.
@@ -184,10 +233,10 @@ func (db *DB[B, T, E]) GetState(ctx context.Context) (*State, error) {
 }
 
 // SaveAllEntities persists blocks, transactions, events, and indexer state in a
-// single database transaction. Entity rows that already exist are overwritten:
-// they are deterministically derived from immutable chain data, so re-indexing
-// a range repairs values previously derived by older code instead of freezing
-// them forever.
+// single database transaction. Entity rows are overwritten on primary-key
+// conflict, so re-indexing repairs values older code derived; a column the
+// current code leaves empty is reset to its default. A conflict on any other
+// unique constraint fails instead of overwriting (New warns at startup).
 //
 // The state row is upserted so the indexing loop only ever writes the columns
 // it owns. On conflict it updates the chain- and last-indexed-progress columns
@@ -201,7 +250,7 @@ func (db *DB[B, T, E]) SaveAllEntities(
 ) error {
 	return db.g.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if len(blocks) != 0 {
-			err := tx.Clauses(clause.OnConflict{UpdateAll: true}).
+			err := tx.Clauses(db.conflicts.block).
 				Create(blocks).
 				Error
 			if err != nil {
@@ -210,7 +259,7 @@ func (db *DB[B, T, E]) SaveAllEntities(
 		}
 
 		if len(transactions) != 0 {
-			err := tx.Clauses(clause.OnConflict{UpdateAll: true}).
+			err := tx.Clauses(db.conflicts.transaction).
 				Create(transactions).
 				Error
 			if err != nil {
@@ -219,7 +268,7 @@ func (db *DB[B, T, E]) SaveAllEntities(
 		}
 
 		if !isEmptyStruct[E]() && len(events) != 0 {
-			err := tx.Clauses(clause.OnConflict{UpdateAll: true}).
+			err := tx.Clauses(db.conflicts.event).
 				Create(events).
 				Error
 			if err != nil {

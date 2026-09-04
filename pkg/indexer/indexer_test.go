@@ -65,8 +65,8 @@ func (m mockDB) DropHistoryIteration(
 }
 
 type dbBlock struct {
-	BlockNumber uint64
-	Timestamp   uint64
+	BlockNumber uint64 `gorm:"primaryKey"`
+	Timestamp   uint64 `gorm:"index"`
 }
 
 func (b dbBlock) GetBlockNumber() uint64 {
@@ -80,7 +80,11 @@ func (b dbBlock) HistoryDropOrder() []database.Deletable {
 	return nil
 }
 
-type dbTransaction struct{}
+type dbTransaction struct {
+	Hash        string `gorm:"primaryKey"`
+	BlockNumber uint64 `gorm:"index"`
+	Timestamp   uint64 `gorm:"index"`
+}
 
 type mockBlockchain struct{}
 
