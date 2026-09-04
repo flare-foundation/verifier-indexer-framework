@@ -6,6 +6,7 @@ import (
 	"os/signal"
 	"reflect"
 	"syscall"
+	"time"
 
 	"github.com/alexflint/go-arg"
 	commonlogger "github.com/flare-foundation/go-flare-common/pkg/logger"
@@ -114,7 +115,12 @@ func runWithArgs[B database.Block, C config.EnvOverrideable, T database.Transact
 
 	ix := indexer.New(&cfg.Base, db, bc, log)
 
-	return ix.Run(ctx)
+	// Cancellation is the documented way to shut down, so it must not exit non-zero.
+	if err := ix.Run(ctx); !errors.Is(err, context.Canceled) {
+		return err
+	}
+
+	return nil
 }
 
 // saveVersion persists build metadata and blockchain node version to the database.
@@ -127,16 +133,21 @@ func saveVersion[B database.Block, T database.Transaction, E database.Event](
 
 	buildVersion, err := config.ReadBuildVersion()
 	if err != nil {
-		log.Warn("failed to read the project build info")
+		log.Warnf("failed to read the project build info: %v", err)
 	} else {
 		version.GitTag = buildVersion.GitTag
 		version.GitHash = buildVersion.GitHash
 		version.BuildDate = buildVersion.BuildDate
 	}
 
-	nodeVersion, err := blockchain.GetServerInfo(ctx)
+	// Best-effort metadata, but bounded: an unresponsive node must not hang
+	// startup indefinitely.
+	infoCtx, cancel := context.WithTimeout(ctx, time.Duration(cfg.Timeout.RequestTimeoutMillis)*time.Millisecond)
+	defer cancel()
+
+	nodeVersion, err := blockchain.GetServerInfo(infoCtx)
 	if err != nil {
-		log.Warn("failed to fetch blockchain node info")
+		log.Warnf("failed to fetch blockchain node info: %v", err)
 	} else {
 		version.NodeVersion = nodeVersion
 	}
