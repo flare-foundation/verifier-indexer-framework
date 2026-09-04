@@ -818,9 +818,16 @@ func TestFindBlockOnTheNode(t *testing.T) {
 
 func TestGetMinBlockWithinHistoryInterval(t *testing.T) {
 	t.Run("transient failure on the start block aborts instead of moving it", func(t *testing.T) {
+		// Blocks above the start block must be available, or the subtest passes
+		// for the wrong reason: the search would fail either way.
+		timestamps := make(map[uint64]uint64, 81)
+		for n := uint64(20); n <= 100; n++ {
+			timestamps[n] = n * 10
+		}
+
 		ix := &Indexer[dbBlock, dbTransaction, struct{}]{
 			blockchain: &timestampBlockchain{
-				timestamps: map[uint64]uint64{10: 100},
+				timestamps: timestamps,
 				transient:  map[uint64]bool{10: true},
 				latest:     &BlockInfo{BlockNumber: 100, Timestamp: 1000},
 			},
@@ -832,6 +839,22 @@ func TestGetMinBlockWithinHistoryInterval(t *testing.T) {
 		_, err := ix.getMinBlockWithinHistoryInterval(t.Context())
 		require.Error(t, err)
 		require.Equal(t, uint64(10), ix.startBlockNumber, "start block must not move on a transient failure")
+	})
+
+	t.Run("start block ahead of the chain tip waits instead of failing", func(t *testing.T) {
+		ix := &Indexer[dbBlock, dbTransaction, struct{}]{
+			blockchain: &timestampBlockchain{
+				timestamps: map[uint64]uint64{},
+				latest:     &BlockInfo{BlockNumber: 100, Timestamp: 1000},
+			},
+			startBlockNumber:    200,
+			historyDropInterval: 200,
+			log:                 logger.Nop{},
+		}
+
+		start, err := ix.getMinBlockWithinHistoryInterval(t.Context())
+		require.NoError(t, err, "a start block above the tip is a wait, not an error")
+		require.Equal(t, uint64(200), start)
 	})
 
 	t.Run("pruned start block falls back to the oldest available block", func(t *testing.T) {

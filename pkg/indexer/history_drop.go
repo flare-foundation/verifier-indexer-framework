@@ -49,11 +49,26 @@ func (ix *Indexer[B, T, E]) getMinBlockWithinHistoryInterval(
 		return 0, fmt.Errorf("failed to get latest block info: %w", err)
 	}
 
+	// Checked before probing the start block: the not-found fallback would
+	// binary-search an already-inverted [start, tip] range.
+	if latestBlock.BlockNumber < ix.startBlockNumber {
+		return ix.startBlockNumber, nil
+	}
+
 	firstBlockTime, err := ix.blockchain.GetBlockTimestamp(ctx, ix.startBlockNumber)
 	if err != nil {
 		// Only a block genuinely absent from the node may move the start block;
 		// any other failure aborts the startup instead of silently raising it.
 		if !errors.Is(err, ErrBlockNotFound) {
+			if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+				ix.log.Warnf(
+					"start block %d probe failed with an error that does not wrap ErrBlockNotFound: %v; "+
+						"if this block is pruned from the node, wrap indexer.ErrBlockNotFound so the "+
+						"oldest available block can be found instead",
+					ix.startBlockNumber, err,
+				)
+			}
+
 			return 0, fmt.Errorf("failed to get timestamp for configured start block %d: %w", ix.startBlockNumber, err)
 		}
 
@@ -75,10 +90,6 @@ func (ix *Indexer[B, T, E]) getMinBlockWithinHistoryInterval(
 
 	if latestBlock.Timestamp <= firstBlockTime ||
 		latestBlock.Timestamp-firstBlockTime < ix.historyDropInterval {
-		return ix.startBlockNumber, nil
-	}
-
-	if latestBlock.BlockNumber < ix.startBlockNumber {
 		return ix.startBlockNumber, nil
 	}
 
