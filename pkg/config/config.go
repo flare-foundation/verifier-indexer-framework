@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 	"github.com/caarlos0/env/v11"
@@ -78,9 +79,25 @@ var defaultIndexer = Indexer{
 }
 
 // ReadFile decodes a TOML configuration file at the given filepath into cfg.
+// Unknown keys are rejected: a mistyped key would otherwise be dropped
+// silently, leaving the default in place.
 func ReadFile[T any](filepath string, cfg T) error {
-	_, err := toml.DecodeFile(filepath, cfg)
-	return err
+	meta, err := toml.DecodeFile(filepath, cfg)
+	if err != nil {
+		return err
+	}
+
+	undecoded := meta.Undecoded()
+	if len(undecoded) == 0 {
+		return nil
+	}
+
+	keys := make([]string, 0, len(undecoded))
+	for _, key := range undecoded {
+		keys = append(keys, key.String())
+	}
+
+	return fmt.Errorf("unknown configuration keys: %s", strings.Join(keys, ", "))
 }
 
 // EnvOverrideable is implemented by configuration types that support overriding

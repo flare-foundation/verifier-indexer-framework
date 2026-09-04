@@ -133,3 +133,42 @@ func TestApplyEnvOverrides(t *testing.T) {
 		require.Equal(t, 5432, cfg.DB.Port)
 	})
 }
+
+func TestReadFileRejectsUnknownKeys(t *testing.T) {
+	tests := []struct {
+		name        string
+		body        string
+		expectedErr string
+	}{
+		{
+			name: "known keys decode",
+			body: "[indexer]\nconfirmations = 3\n",
+		},
+		{
+			name:        "mistyped key is reported",
+			body:        "[indexer]\nconfirmation = 3\n",
+			expectedErr: "indexer.confirmation",
+		},
+		{
+			name:        "unknown table is reported",
+			body:        "[indexerr]\nconfirmations = 3\n",
+			expectedErr: "indexerr",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.toml")
+			require.NoError(t, os.WriteFile(path, []byte(tc.body), 0o600))
+
+			var cfg Base
+			err := ReadFile(path, &cfg)
+			if tc.expectedErr == "" {
+				require.NoError(t, err)
+				return
+			}
+
+			require.ErrorContains(t, err, tc.expectedErr)
+		})
+	}
+}
