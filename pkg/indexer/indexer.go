@@ -187,7 +187,7 @@ func (ix *Indexer[B, T, E]) getInitialStartBlockNumber(ctx context.Context, stat
 	// If history drop is disabled: we either start from after the last indexed block, or else we start
 	// from the configured start block number if the DB is empty.
 	if ix.historyDropInterval == 0 {
-		if state.LastIndexedBlockNumber > 0 {
+		if !indexedNothing(state) {
 			ix.log.Infof("resuming after last indexed block from the database: %d", state.LastIndexedBlockNumber)
 			return state.LastIndexedBlockNumber + 1, nil
 		}
@@ -202,38 +202,45 @@ func (ix *Indexer[B, T, E]) getInitialStartBlockNumber(ctx context.Context, stat
 		return 0, fmt.Errorf("failed to calculate start block number based on history drop interval: %w", err)
 	}
 
+	if indexedNothing(state) {
+		ix.log.Infof("no blocks indexed yet within history drop interval, starting from block number: %d", historyDropStartBlock)
+		return historyDropStartBlock, nil
+	}
+
 	if state.LastIndexedBlockNumber+1 >= historyDropStartBlock {
 		ix.log.Infof("resuming after last indexed block from the database: %d", state.LastIndexedBlockNumber)
 		return state.LastIndexedBlockNumber + 1, nil
 	}
 
-	if state.LastIndexedBlockNumber > 0 {
-		// Indexing resumes ahead of the last indexed block, so the blocks in
-		// between are never indexed. Move the advertised coverage boundary to
-		// the new start block and persist it before indexing begins, so the
-		// state never claims the gap or the stale rows below it as covered.
-		firstBlockTime, err := ix.blockchain.GetBlockTimestamp(ctx, historyDropStartBlock)
-		if err != nil {
-			return 0, fmt.Errorf("failed to get timestamp for resume start block %d: %w", historyDropStartBlock, err)
-		}
-
-		ix.log.Warnf(
-			"resuming from block %d leaves blocks %d to %d unindexed, moving the first indexed block boundary",
-			historyDropStartBlock, state.LastIndexedBlockNumber+1, historyDropStartBlock-1,
-		)
-
-		state.FirstIndexedBlockNumber = historyDropStartBlock
-		state.FirstIndexedBlockTimestamp = firstBlockTime
-
-		if err := ix.db.SaveState(ctx, state); err != nil {
-			return 0, fmt.Errorf("failed to persist state when resuming past unindexed blocks: %w", err)
-		}
-
-		return historyDropStartBlock, nil
+	// Indexing resumes ahead of the last indexed block, so the blocks in between
+	// are never indexed. Move the advertised coverage boundary to the new start
+	// block and persist it before indexing begins, so the state never claims the
+	// gap or the stale rows below it as covered.
+	firstBlockTime, err := ix.blockchain.GetBlockTimestamp(ctx, historyDropStartBlock)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get timestamp for resume start block %d: %w", historyDropStartBlock, err)
 	}
 
-	ix.log.Infof("no blocks indexed yet within history drop interval, starting from block number: %d", historyDropStartBlock)
+	ix.log.Warnf(
+		"resuming from block %d leaves blocks %d to %d unindexed, moving the first indexed block boundary",
+		historyDropStartBlock, state.LastIndexedBlockNumber+1, historyDropStartBlock-1,
+	)
+
+	state.FirstIndexedBlockNumber = historyDropStartBlock
+	state.FirstIndexedBlockTimestamp = firstBlockTime
+
+	if err := ix.db.SaveState(ctx, state); err != nil {
+		return 0, fmt.Errorf("failed to persist state when resuming past unindexed blocks: %w", err)
+	}
+
 	return historyDropStartBlock, nil
+}
+
+// indexedNothing reports whether no block has ever been saved.
+// LastIndexedBlockNumber zero is ambiguous — nothing indexed, or block 0
+// indexed — so the update stamp, written by every save, breaks the tie.
+func indexedNothing(state *database.State) bool {
+	return state.LastIndexedBlockNumber == 0 && state.LastIndexedBlockUpdated == 0
 }
 
 // runIteration executes a single indexer cycle: updates chain state, checks for
@@ -252,14 +259,14 @@ func (ix *Indexer[B, T, E]) runIteration(
 		func() error {
 			newState, err := ix.updateChainState(ctx, state)
 			if err != nil {
-				return err
+				return permanentIfSentinel(err)
 			}
 
 			ix.log.Debugf("updated chain state: %+v", newState)
 			state = newState
 			return nil
 		},
-		ix.newBackoff(),
+		ix.newBackoff(ctx),
 		func(err error, d time.Duration) {
 			ix.log.Errorf("indexer update chain state error: %v. Will retry after %v", err, d)
 		},
@@ -278,22 +285,19 @@ func (ix *Indexer[B, T, E]) runIteration(
 		func() error {
 			results, err := ix.getIterationResults(ctx, state)
 			if err != nil {
-				// Deterministic data failures abort the indexer immediately;
-				// retrying cannot help and skipping data is not an option.
-				if errors.Is(err, ErrInvalidData) {
-					return backoff.Permanent(err)
-				}
-
-				return err
+				return permanentIfSentinel(err)
 			}
 
 			if results == nil {
 				ix.log.Debug("no new blocks to index, indexer is up to date")
 				nextInterval := upToDateBackoff.NextBackOff()
-				if nextInterval == backoff.Stop {
-					nextInterval = upToDateBackoff.MaxInterval
+
+				select {
+				case <-time.After(nextInterval):
+				case <-ctx.Done():
+					return backoff.Permanent(ctx.Err())
 				}
-				time.Sleep(nextInterval)
+
 				return nil
 			}
 
@@ -309,7 +313,7 @@ func (ix *Indexer[B, T, E]) runIteration(
 
 			return nil
 		},
-		ix.newBackoff(),
+		ix.newBackoff(ctx),
 		func(err error, d time.Duration) {
 			ix.log.Errorf("indexer iteration error: %v. Will retry after %v", err, d)
 		},
@@ -364,7 +368,7 @@ func (ix *Indexer[B, T, E]) maybeRunHistoryDrop(
 				newState, err = ix.runHistoryDrop(ctx, &state)
 				return err
 			},
-			ix.newBackoff(),
+			ix.newBackoff(ctx),
 			func(err error, d time.Duration) {
 				ix.log.Errorf("indexer history drop error: %v. Will retry after %v", err, d)
 			},
@@ -501,7 +505,7 @@ func (ix *Indexer[B, T, E]) getBlockRange(state *database.State) *blockRange {
 
 // getStartBlock returns the block number to begin indexing from in the current iteration.
 func (ix *Indexer[B, T, E]) getStartBlock(state *database.State) uint64 {
-	if state.LastIndexedBlockNumber < ix.computedStartBlock {
+	if indexedNothing(state) || state.LastIndexedBlockNumber < ix.computedStartBlock {
 		return ix.computedStartBlock
 	}
 
@@ -551,6 +555,10 @@ func (ix *Indexer[B, T, E]) getBlockResults(
 			res, err := ix.blockchain.GetBlockResult(ctx, i)
 			if err != nil {
 				return err
+			}
+
+			if res == nil {
+				return fmt.Errorf("%w: GetBlockResult returned no result for block %d", ErrInvalidData, i)
 			}
 
 			results[i-blkRange.start] = *res
@@ -615,15 +623,33 @@ func (ix *Indexer[B, T, E]) updateChainState(ctx context.Context, state *databas
 		return nil, err
 	}
 
+	if blockInfo == nil {
+		return nil, fmt.Errorf("%w: GetLatestBlockInfo returned no result", ErrInvalidData)
+	}
+
 	newState.LastChainBlockNumber = blockInfo.BlockNumber
 	newState.LastChainBlockTimestamp = blockInfo.Timestamp
 
 	return &newState, nil
 }
 
-// newBackoff creates a new exponential backoff with the indexer's configured max elapsed time.
-func (ix *Indexer[B, T, E]) newBackoff() backoff.BackOff {
-	return backoff.NewExponentialBackOff(backoff.WithMaxElapsedTime(ix.backoffMaxElapsedTime))
+// newBackoff creates a new exponential backoff with the indexer's configured max
+// elapsed time. Wrapped in ctx so retry sleeps do not outlive a shutdown signal.
+func (ix *Indexer[B, T, E]) newBackoff(ctx context.Context) backoff.BackOff {
+	return backoff.WithContext(
+		backoff.NewExponentialBackOff(backoff.WithMaxElapsedTime(ix.backoffMaxElapsedTime)),
+		ctx,
+	)
+}
+
+// permanentIfSentinel marks the BlockchainClient error sentinels as permanent so
+// a retry loop stops on them instead of burning the whole backoff window.
+func permanentIfSentinel(err error) error {
+	if errors.Is(err, ErrInvalidData) || errors.Is(err, ErrBlockNotFound) {
+		return backoff.Permanent(err)
+	}
+
+	return err
 }
 
 // updateState returns a new State reflecting the last and first indexed blocks

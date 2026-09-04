@@ -158,6 +158,51 @@ func TestIndexer(t *testing.T) {
 	require.Equal(t, state, db.states[0])
 }
 
+// TestRunIterationHonoursContextWhileUpToDate pins graceful shutdown for a
+// caught-up indexer: the wait between polls must observe cancellation.
+func TestRunIterationHonoursContextWhileUpToDate(t *testing.T) {
+	ix := Indexer[dbBlock, dbTransaction, struct{}]{
+		blockchain: &timestampBlockchain{
+			timestamps: map[uint64]uint64{},
+			latest:     &BlockInfo{BlockNumber: 5, Timestamp: 5000},
+		},
+		confirmations:         100, // tip below confirmations, so nothing is indexable
+		db:                    &mockDB{},
+		maxBlockRange:         10,
+		maxConcurrency:        1,
+		backoffMaxElapsedTime: time.Minute,
+		log:                   logger.Nop{},
+	}
+
+	// A saturated up-to-date backoff would otherwise wait for the best part of
+	// an hour before looking at the context again.
+	upToDateBackoff := backoff.NewExponentialBackOff(
+		backoff.WithMaxElapsedTime(0),
+		backoff.WithInitialInterval(time.Hour),
+		backoff.WithMaxInterval(time.Hour),
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	var historyDropLock sync.Mutex
+
+	start := time.Now()
+	_, err := ix.runIteration(
+		ctx,
+		&database.State{LastIndexedBlockNumber: 1, LastIndexedBlockUpdated: 1},
+		&historyDropLock,
+		make(chan *database.State, 1),
+		upToDateBackoff,
+	)
+
+	require.ErrorIs(t, err, context.Canceled)
+	require.Less(t, time.Since(start), 10*time.Second, "the wait must be interrupted by cancellation")
+}
+
 func TestPollHistoryDropResults(t *testing.T) {
 	ctx := context.Background()
 
@@ -521,6 +566,27 @@ func TestGetStartBlock(t *testing.T) {
 		state := &database.State{LastIndexedBlockNumber: 100}
 
 		require.Equal(t, uint64(101), ix.getStartBlock(state))
+	})
+
+	t.Run("indexes block zero on a fresh database", func(t *testing.T) {
+		ix := Indexer[dbBlock, dbTransaction, struct{}]{
+			computedStartBlock: 0,
+			log:                logger.Nop{},
+		}
+		var state database.State
+
+		require.Equal(t, uint64(0), ix.getStartBlock(&state), "block 0 must not be skipped")
+	})
+
+	t.Run("moves past block zero once it is indexed", func(t *testing.T) {
+		ix := Indexer[dbBlock, dbTransaction, struct{}]{
+			computedStartBlock: 0,
+			log:                logger.Nop{},
+		}
+		// The update stamp is what distinguishes this from a fresh database.
+		state := &database.State{LastIndexedBlockNumber: 0, LastIndexedBlockUpdated: 1700000000}
+
+		require.Equal(t, uint64(1), ix.getStartBlock(state))
 	})
 }
 
