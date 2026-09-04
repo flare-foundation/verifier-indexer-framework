@@ -38,6 +38,12 @@ type DB[B Block, T Transaction, E Event] struct {
 	conflicts entityConflicts
 }
 
+// stateTable returns the state table's name as the naming strategy derives it.
+// Resolved on use so no construction path can leave it unset.
+func (db *DB[B, T, E]) stateTable() string {
+	return db.g.NamingStrategy.TableName("State")
+}
+
 // Close closes the underlying database connection.
 func (db *DB[B, T, E]) Close() error {
 	sqlDB, err := db.g.DB()
@@ -287,7 +293,7 @@ func (db *DB[B, T, E]) SaveAllEntities(
 		if state != nil {
 			err := tx.Clauses(clause.OnConflict{
 				Columns:   []clause.Column{{Name: "id"}},
-				DoUpdates: indexingStateAssignments(),
+				DoUpdates: indexingStateAssignments(db.stateTable()),
 			}).Create(state).Error
 			if err != nil {
 				return err
@@ -308,7 +314,13 @@ func (db *DB[B, T, E]) SaveAllEntities(
 // The first-indexed CASE qualifies the existing-row reference with the "states"
 // table name (the gorm-derived table for State): inside ON CONFLICT DO UPDATE an
 // unqualified column is ambiguous between the target row and excluded.
-func indexingStateAssignments() clause.Set {
+func indexingStateAssignments(table string) clause.Set {
+	// The boundary is establishable only while the caller's view of the drop is
+	// current: a save carrying a pre-drop boundary would otherwise resurrect it
+	// through the empty sentinel a drop had just written.
+	establishable := fmt.Sprintf(
+		"%[1]s.first_indexed_block_number = 0 AND %[1]s.last_history_drop = excluded.last_history_drop", table)
+
 	return clause.Assignments(map[string]any{
 		"last_chain_block_number":      gorm.Expr("excluded.last_chain_block_number"),
 		"last_chain_block_timestamp":   gorm.Expr("excluded.last_chain_block_timestamp"),
@@ -316,10 +328,12 @@ func indexingStateAssignments() clause.Set {
 		"last_indexed_block_number":    gorm.Expr("excluded.last_indexed_block_number"),
 		"last_indexed_block_timestamp": gorm.Expr("excluded.last_indexed_block_timestamp"),
 		"last_indexed_block_updated":   gorm.Expr("excluded.last_indexed_block_updated"),
-		"first_indexed_block_number": gorm.Expr(
-			"CASE WHEN states.first_indexed_block_number = 0 THEN excluded.first_indexed_block_number ELSE states.first_indexed_block_number END"),
-		"first_indexed_block_timestamp": gorm.Expr(
-			"CASE WHEN states.first_indexed_block_number = 0 THEN excluded.first_indexed_block_timestamp ELSE states.first_indexed_block_timestamp END"),
+		"first_indexed_block_number": gorm.Expr(fmt.Sprintf(
+			"CASE WHEN %s THEN excluded.first_indexed_block_number ELSE %s.first_indexed_block_number END",
+			establishable, table)),
+		"first_indexed_block_timestamp": gorm.Expr(fmt.Sprintf(
+			"CASE WHEN %s THEN excluded.first_indexed_block_timestamp ELSE %s.first_indexed_block_timestamp END",
+			establishable, table)),
 	})
 }
 

@@ -64,16 +64,32 @@ func TestStateWriterColumnOwnership(t *testing.T) {
 	assert.Equal(t, uint64(2000), got.LastIndexedBlockTimestamp)
 	assert.Equal(t, uint64(777), got.LastHistoryDrop, "last_history_drop is owned by the drop")
 
-	// After a drop empties the database and resets the boundary to zero, the next
-	// regular save re-establishes it from the empty sentinel.
+	// A drop empties the database and resets the boundary to zero.
 	require.NoError(t, db.persistHistoryDropState(ctx, &State{ID: globalStateID, LastHistoryDrop: 888}, nil))
 
+	// A save still carrying the pre-drop boundary must not resurrect it through
+	// the empty sentinel. Its stale last_history_drop is what gives it away.
+	require.NoError(t, db.SaveAllEntities(ctx, nil, nil, nil, &State{
+		ID:                         globalStateID,
+		FirstIndexedBlockNumber:    100,
+		FirstIndexedBlockTimestamp: 1000,
+		LastIndexedBlockNumber:     6000,
+		LastIndexedBlockTimestamp:  60000,
+		LastHistoryDrop:            777,
+	}))
+
+	got, err = db.GetState(ctx)
+	require.NoError(t, err)
+	assert.Zero(t, got.FirstIndexedBlockNumber, "a stale save must not resurrect a dropped boundary")
+
+	// A save whose view of the drop is current does establish the boundary.
 	require.NoError(t, db.SaveAllEntities(ctx, nil, nil, nil, &State{
 		ID:                         globalStateID,
 		FirstIndexedBlockNumber:    6000,
 		FirstIndexedBlockTimestamp: 60000,
 		LastIndexedBlockNumber:     6000,
 		LastIndexedBlockTimestamp:  60000,
+		LastHistoryDrop:            888,
 	}))
 
 	got, err = db.GetState(ctx)

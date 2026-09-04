@@ -142,10 +142,10 @@ func (db *DB[B, T, E]) persistHistoryDropState(ctx context.Context, state *State
 
 	if prior != nil {
 		firstNumber = gorm.Expr(
-			"CASE WHEN states.first_indexed_block_number = ? THEN ? ELSE states.first_indexed_block_number END",
+			fmt.Sprintf("CASE WHEN %[1]s.first_indexed_block_number = ? THEN ? ELSE %[1]s.first_indexed_block_number END", db.stateTable()),
 			*prior, state.FirstIndexedBlockNumber)
 		firstTimestamp = gorm.Expr(
-			"CASE WHEN states.first_indexed_block_number = ? THEN ? ELSE states.first_indexed_block_timestamp END",
+			fmt.Sprintf("CASE WHEN %[1]s.first_indexed_block_number = ? THEN ? ELSE %[1]s.first_indexed_block_timestamp END", db.stateTable()),
 			*prior, state.FirstIndexedBlockTimestamp)
 	}
 
