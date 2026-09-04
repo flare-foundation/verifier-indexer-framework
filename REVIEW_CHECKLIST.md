@@ -5,7 +5,7 @@
 All items from the original automated review have been resolved:
 
 - [x] **`tests/test_config.toml:18`** — Key `timeout_millis` renamed to `request_timeout_millis`
-- [x] **`.gitlab-ci.yml:3`** — `GOLANG_VERSION` now matches `go.mod` (`go 1.25.5`)
+- [x] **`.gitlab-ci.yml:3`** — `GOLANG_VERSION` matches `go.mod` (`go 1.26.8`), as does `.golangci.yml`'s `run.go`
 - [x] **`pkg/config/config.go`** — `ApplyEnvOverrides` now returns `error` instead of logging and swallowing
 - [x] **`pkg/database/history_drop.go`** — `return &newState, err` replaced with `return &newState, nil`
 - [x] **`pkg/indexer/history_drop.go`** — Uint64 subtractions are guarded by comparison checks
@@ -30,14 +30,14 @@ All items from the original automated review have been resolved:
 
 ### Configuration & Build
 
-- [ ] Verify `config.ReadFile` behavior when TOML file has unknown keys (does BurntSushi/toml silently ignore them or warn?)
+- [x] Verify `config.ReadFile` behavior when TOML file has unknown keys — they were silently ignored; `ReadFile` now inspects `MetaData.Undecoded()` and rejects them
 - [ ] Verify `config.ReadBuildVersion` works correctly when run from different working directories (reads relative paths: `PROJECT_VERSION`, `PROJECT_BUILD_DATE`, `PROJECT_COMMIT_HASH`)
 - [ ] Check that `DefaultBase` defaults are sensible for production use
 - [ ] Confirm `DropTableAtStart` intentionally does NOT drop the `Version` table (only `State`, blocks, transactions, events)
 
 ### Database Layer
 
-- [ ] Review `OnConflict{DoNothing: true}` strategy — confirm this is correct for all entity types (blocks, transactions, events)
+- [x] Review the conflict strategy for all entity types — `OnConflict{UpdateAll: true}` emitted a target-free `DO UPDATE` that PostgreSQL rejects for a primary-key-less entity. The clause is now derived from the parsed schema (primary key as conflict target, update set from the schema rather than the batch), and entities without a primary key are refused at startup
 - [ ] Review `SaveAllEntities` transaction isolation level (GORM default is `READ COMMITTED` on Postgres)
 - [ ] Validate that `transactionBatchSize = 1000` and `deleteBatchSize = 1000` are appropriate for expected data volumes
 - [ ] Confirm `formatDSN` properly handles special characters in username/password (uses `url.UserPassword` which should URL-encode)
@@ -49,14 +49,14 @@ All items from the original automated review have been resolved:
 - [ ] Review `getInitialStartBlockNumber` logic when `historyDropInterval > 0` and `state.LastIndexedBlockNumber > 0` but falls behind the history window
 - [ ] Validate `getEndBlock` arithmetic for edge cases: `confirmations > LastChainBlockNumber`, `start > latestConfirmedNum`
 - [ ] Confirm `binarySearchBlockByTime` handles edge cases: equal timestamps, single-block range, all blocks within interval
-- [ ] Review the up-to-date backoff pattern in `runIteration` — `time.Sleep` inside a retry operation is unconventional; verify it doesn't interact badly with the outer backoff
-- [ ] Review whether `updateState` correctly handles the `LastIndexedBlockNumber == 0` check — is block 0 a valid block number?
+- [x] Review the up-to-date backoff pattern in `runIteration` — the bare `time.Sleep` ignored cancellation, delaying shutdown by up to the poll interval on a *healthy* indexer. It is now a `select` on the timer and `ctx.Done()`, and the retry backoff is context-wrapped
+- [x] Review whether `updateState` correctly handles the `LastIndexedBlockNumber == 0` check — block 0 is valid and was being skipped. The ambiguity between "nothing indexed" and "block 0 indexed" is now resolved by the update timestamp in all three places that overloaded the zero
 
 ### Concurrency & History Drop
 
-- [ ] Review `maybeRunHistoryDrop` goroutine lifecycle — confirm no goroutine leaks when context is cancelled
+- [x] Review `maybeRunHistoryDrop` goroutine lifecycle — the goroutine is not joined, but nothing durable is lost: `DropHistoryIteration` persists `last_history_drop` itself before returning, and the process exits immediately after `framework.Run` returns. Left as is
 - [ ] Validate the `TryLock` / channel / defer unlock pattern in history drop; confirm no deadlock scenarios
-- [ ] Confirm `pollHistoryDropResults` correctly merges state — check that `FirstIndexedBlockNumber` comparison is correct after concurrent indexing + history drop
+- [x] Confirm `pollHistoryDropResults` correctly merges state — reviewed against all four (survives x drop-boundary) combinations; it cannot advertise a deleted block. The undocumented identity it rests on (the drop's deletion threshold is derived from the `LastChainBlockTimestamp` it was handed) is now stated on the `DB` interface
 - [ ] Review that the history drop goroutine's `defer` correctly handles the case where `newState` is nil (retry exhausted)
 
 ### Security
@@ -72,7 +72,7 @@ All items from the original automated review have been resolved:
 - [ ] Review `TestIndexer` — does it test enough of the indexer behavior? (currently tests a single iteration)
 - [ ] Confirm integration test (`TestRun`) is deterministic — time-based `GetLatestBlockInfo` could cause flaky assertions
 - [ ] Check if `getBlockRange`, `getEndBlock`, `binarySearchBlockByTime`, and `deleteInBatches` need dedicated unit tests
-- [ ] Verify the mock implementations in `indexer_test.go` accurately reflect real behavior
+- [x] Verify the mock implementations in `indexer_test.go` accurately reflect real behavior — they did not: `mockDB` recorded calls, so both state-write tests passed with the production fix reverted. It now models the real upsert semantics and the tests fail without the fix
 
 ### CI/CD
 

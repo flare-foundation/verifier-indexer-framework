@@ -10,7 +10,10 @@
 ### Changed
 
 - **Breaking:** require Go 1.26.8 (go directive and CI image); `github.com/jackc/pgx/v5` v5.9.2 and `golang.org/x/text` v0.39.0. Earlier toolchains and these earlier dependency versions carry reachable vulnerabilities (`GO-2026-5856`, `GO-2026-5972`, `GO-2026-5004`, `GO-2026-5970`). Consumers must raise their own `go` directive to build. CI now runs `govulncheck` as a non-gating job.
-- **Breaking:** `SaveAllEntities` overwrites existing rows on primary-key conflict (`ON CONFLICT DO UPDATE`) instead of skipping them, so re-indexing a range repairs values derived by older code. Entities must have unique primary keys within a batch (as on a real chain).
+- **Breaking:** `SaveAllEntities` overwrites existing rows on primary-key conflict (`ON CONFLICT DO UPDATE`) instead of skipping them, so re-indexing a range repairs values derived by older code. Three consequences: every entity must declare a primary key (the framework refuses to start otherwise, and PostgreSQL cannot infer a conflict target without one); rows must be unique by primary key within a single save; and a conflict on any other unique constraint now fails the save instead of being skipped — such entities are warned about at startup. A column the current code leaves empty is reset to its default rather than keeping a stale value.
+- **Breaking:** `indexer.DB` gained `SaveState`, used where the caller holds the authoritative first-indexed boundary. Custom `DB` implementations must add it to compile.
+- **Breaking:** unknown keys in the TOML configuration are now rejected instead of silently ignored, so a mistyped key fails at startup rather than leaving the default in place.
+- When `history_drop` is enabled the block entity must implement `database.Deletable` on its value receiver; this is verified at startup instead of falling back to a hardcoded `timestamp` column.
 - The first-indexed-block boundary only ever moves up (except the empty-table reset). Consumers must read a state with `first > last` (or `first == 0`) as an empty advertised range.
 - Removed the internal unretried blockchain client: startup probes now retry transient errors and fail fast on `ErrBlockNotFound`.
 
@@ -22,6 +25,12 @@
 - A regular indexing-loop save can no longer overwrite the first-indexed boundary a concurrent history drop raised before deleting. `SaveAllEntities` now upserts only the state columns the loop owns and raises the boundary only from the empty sentinel — it never lowers it or touches `last_history_drop` — so the boundary the drop persists before deletion survives the whole deletion window instead of being clobbered mid-drop by an in-flight save. Applying a completed drop result and resuming past unindexed blocks use the new authoritative `SaveState`.
 - Resuming past unindexed blocks (e.g. downtime longer than the retention window) moves and persists the coverage boundary before indexing begins instead of advertising the gap as covered.
 - The zero reset after a drop empties the database is no longer ignored, and the first indexed block is re-established by the next saved batch.
+- A history drop that leaves no surviving block now empties the advertised boundary *before* deleting, instead of after: the stored state no longer advertises the whole range while it is being removed.
+- Block 0 is no longer skipped when `start_block_number` is 0 on a fresh database. A zero last-indexed block number is disambiguated from "nothing indexed" by the update timestamp.
+- Retry waits and the wait between polls when the indexer is caught up now observe context cancellation, so `SIGINT`/`SIGTERM` are no longer delayed by up to the full backoff or poll interval.
+- A signal-initiated shutdown returns `nil` from `framework.Run` instead of the context error, so the process exits zero.
+- The startup node-version probe is bounded by `request_timeout_millis`; an unresponsive node no longer hangs startup indefinitely.
+- `GetBlockResult` and `GetLatestBlockInfo` returning `(nil, nil)` are reported as a contract violation instead of panicking.
 
 ## [v1.1.1] - 2026-4-17
 

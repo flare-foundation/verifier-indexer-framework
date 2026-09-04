@@ -53,14 +53,14 @@ go test ./...
 ```
 
 There is an integration test, which requires a running instance of PostgreSQL
-with a database called `verifier_indexer_test`.
+with a database called `indexer_framework_db`.
 You may run such a database locally with Docker:
 
 ```bash
 docker-compose -f tests/docker-compose.yaml up -d
 ```
 
-Then, modify the `tests/test_config.yaml` file to change the `host` field to
+Then, modify the `tests/test_config.toml` file to change the `host` field to
 `localhost`.
 
 Finally, you can run the integration tests with:

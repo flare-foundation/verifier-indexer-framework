@@ -81,6 +81,7 @@ If the database already has blocks indexed past that point, it resumes from wher
 Otherwise, it starts from the calculated block — meaning it will not waste time indexing blocks that would be immediately pruned.
 When that skips ahead of previously indexed data (e.g., downtime longer than the retention window), the blocks in between are never indexed: the first-indexed-block boundary is moved up to the new start and persisted before indexing begins, so the state never advertises the gap as covered.
 Any older rows still in the database sit outside the advertised range until history drops remove them.
+This boundary move happens **at startup only** — the start block is not re-derived against the retention window while the indexer runs. An indexer that cannot keep up with the chain will have each history drop delete the range it has just indexed; that is a capacity problem, and the fix is more throughput, not a different boundary.
 Until the first new batch is saved, the persisted state may have a first indexed block greater than the last indexed block — consumers must read that (like a zero first indexed block) as an empty advertised range.
 If the configured `start_block_number` is no longer available on the node (e.g., the node has pruned it), the framework binary-searches for the lowest block the node still serves and uses that as the effective start instead.
 
@@ -136,10 +137,15 @@ Every blockchain RPC call is wrapped with exponential backoff and a per-request 
 If all retries are exhausted within `backoff_max_elapsed_time_seconds`, the error is considered fatal and the indexer shuts down.
 The same retry strategy applies to chain state updates, block fetching, and history drops independently.
 
+Two error classes are exempt because retrying them cannot help. An error wrapping `indexer.ErrBlockNotFound` or `indexer.ErrInvalidData` is treated as permanent and stops the retry loop immediately instead of consuming the whole backoff window. See [What You Must Implement](#4-blockchain-client) for the contract your client must honour.
+
+Retry waits and the wait between polls when the indexer is caught up both observe context cancellation, so a shutdown signal is not delayed by an in-progress backoff.
+
 ### Graceful Shutdown
 
 The indexer listens for `SIGINT` and `SIGTERM`.
-On receiving either signal, it cancels the context, allowing the current iteration to finish cleanly before the process exits.
+On receiving either signal it cancels the context, which interrupts any retry or up-to-date wait in progress and lets the current iteration stop cleanly.
+A signal-initiated shutdown is not an error: `framework.Run` returns `nil`, so the process exits zero.
 
 ## What You Must Implement
 
@@ -167,11 +173,29 @@ type Deletable interface {
 }
 ```
 
+When `history_drop` is enabled the block entity itself must implement `database.Deletable`, and it must do so on the **value** receiver — the framework reads the column name from a zero value of your block type, and a pointer-receiver method is invisible there. It is rejected at startup if missing.
+
+Index both the `TimestampField()` column and `block_number` on every prunable entity:
+
+```go
+Timestamp   uint64 `gorm:"index"`
+BlockNumber uint64 `gorm:"index"`
+```
+
+History drop deletes in 1000-row batches selected by `ctid`, and finds the surviving boundary by timestamp. Without these indexes each batch degrades into a full table scan, so a large table makes pruning progressively slower.
+
+A child entity's `TimestampField()` column must carry its **parent block's** timestamp, not a time of its own. The advertised coverage boundary is computed from the block table alone, so a child with an independent timestamp can be pruned out from under a block that is still advertised as indexed.
+
 ### 2. Transaction Entity
 
 Any struct with GORM tags.
 There is no required interface — `database.Transaction` is defined as `any`.
 The framework stores these in batches alongside their parent blocks.
+
+**Every entity must declare a primary key**, and it must be the entity's deterministic chain identity (a hash or block number), not a generated sequence. Rows are overwritten on primary-key conflict, so the primary key is the conflict target; the framework refuses to start without one. Two consequences worth knowing:
+
+- Rows must be unique by primary key *within* a single save, or PostgreSQL rejects the whole batch.
+- A conflict on any **other** unique constraint fails the save instead of overwriting the row. The framework logs a warning at startup for entities declaring such constraints.
 
 ### 3. Event Entity (Optional)
 
@@ -213,7 +237,7 @@ A struct implementing `config.EnvOverrideable`:
 
 ```go
 type EnvOverrideable interface {
-    ApplyEnvOverrides()
+    ApplyEnvOverrides() error
 }
 ```
 
@@ -299,6 +323,12 @@ end_block_number = 0                # Stop after this block; 0 = run forever
 backoff_max_elapsed_time_seconds = 300   # Max total retry time (default: 300)
 request_timeout_millis = 3000            # Per-request timeout (default: 3000)
 
+[logger]
+level = "DEBUG"                          # DEBUG, INFO, WARN, ERROR, DPANIC, PANIC or FATAL (default: DEBUG)
+console = true                           # Also log to the console (default: true)
+file = ""                                # Optional log file path
+max_file_size = 0                        # Log file size in megabytes before rotating
+
 [blockchain]
 # Your blockchain-specific fields go here
 ```
@@ -319,14 +349,14 @@ The key structure is:
 
 ## Testing
 
-There is an integration test, which requires a running instance of Postgres with a database called `verifier_indexer_test`.
+There is an integration test, which requires a running instance of Postgres with a database called `indexer_framework_db`.
 You may run such a database locally with Docker:
 
 ```bash
 docker-compose -f tests/docker-compose.yaml up -d
 ```
 
-Then, modify the `tests/test_config.yaml` file to change the `host` field to
+Then, modify the `tests/test_config.toml` file to change the `host` field to
 `localhost`.
 
 Finally, you can run the tests with:
