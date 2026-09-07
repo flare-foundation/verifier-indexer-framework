@@ -143,7 +143,9 @@ Every blockchain RPC call is wrapped with exponential backoff and a per-request 
 If all retries are exhausted within `backoff_max_elapsed_time_seconds`, the error is considered fatal and the indexer shuts down.
 The same retry strategy applies to chain state updates, block fetching, and history drops independently.
 
-Two error classes are exempt because retrying them cannot help. An error wrapping `indexer.ErrBlockNotFound` or `indexer.ErrInvalidData` is treated as permanent and stops the retry loop immediately instead of consuming the whole backoff window. See [What You Must Implement](#4-blockchain-client) for the contract your client must honour.
+Two error classes are exempt because retrying them cannot help. An error wrapping `indexer.ErrInvalidData` is permanent everywhere, and one wrapping `indexer.ErrBlockNotFound` is permanent for `GetBlockTimestamp`, the chain-tip and the node-info calls, so each stops its retry loop immediately instead of consuming the whole backoff window.
+`GetBlockResult` is the exception: it only asks for blocks below a tip the node has reported, so a not-found there usually comes from a lagging backend of a load-balanced endpoint and is retried within the window. A block still missing when the window closes is fatal.
+See [What You Must Implement](#4-blockchain-client) for the contract your client must honour.
 
 Retry waits and the wait between polls when the indexer is caught up both observe context cancellation, so a shutdown signal is not delayed by an in-progress backoff.
 
@@ -263,7 +265,7 @@ type BlockchainClient[B Block, T Transaction, E Event] interface {
 You do **not** need to implement retry logic — the framework wraps every call with exponential backoff automatically.
 
 Methods taking a block number should return an error wrapping `indexer.ErrBlockNotFound` when the block does not exist on the node (e.g. pruned or not yet available).
-The framework relies on this to distinguish missing blocks from transient failures: not-found errors are never retried, and a pruned start block is searched for with retried probes.
+The framework relies on this to distinguish missing blocks from transient failures: a pruned start block is searched for with retried probes that fail fast on not-found, while a block fetch that reports not-found below the reported tip is retried within the backoff window before it is fatal.
 A client that reports a pruned start block with a plain error still works: once the retry window is exhausted the framework warns and falls back to v1.1.1's unretried search, in which any failure counts as absent, so a persistent plain failure on exactly the start block can move it as it did then.
 
 Deterministic processing failures — data in a validated block that the implementation cannot parse — must wrap `indexer.ErrInvalidData`.

@@ -1197,6 +1197,35 @@ func TestRetryWithBackoffBlockNotFound(t *testing.T) {
 		require.ErrorIs(t, err, ErrInvalidData)
 		require.Equal(t, 1, client.calls)
 	})
+
+	t.Run("block fetch retries a not-found from a lagging backend", func(t *testing.T) {
+		client := &flakyBlockchain{errs: []error{fmt.Errorf("block 5: %w", ErrBlockNotFound)}}
+		bwb := newBlockchainWithBackoff[dbBlock, dbTransaction, struct{}](client, 5*time.Second, 100*time.Millisecond, logger.Nop{})
+
+		result, err := bwb.GetBlockResult(t.Context(), 5)
+		require.NoError(t, err)
+		require.Equal(t, uint64(5), result.Block.BlockNumber)
+		require.Equal(t, 2, client.calls)
+	})
+
+	t.Run("block fetch gives up on a not-found that outlasts the window", func(t *testing.T) {
+		notFound := fmt.Errorf("block 5: %w", ErrBlockNotFound)
+		client := &flakyBlockchain{errs: []error{notFound, notFound, notFound, notFound}}
+		bwb := newBlockchainWithBackoff[dbBlock, dbTransaction, struct{}](client, time.Second, 100*time.Millisecond, logger.Nop{})
+
+		_, err := bwb.GetBlockResult(t.Context(), 5)
+		require.ErrorIs(t, err, ErrBlockNotFound, "still the sentinel, so the iteration loop stops instead of retrying again")
+		require.GreaterOrEqual(t, client.calls, 2)
+	})
+
+	t.Run("block fetch does not retry invalid data", func(t *testing.T) {
+		client := &flakyBlockchain{errs: []error{fmt.Errorf("bad tx: %w", ErrInvalidData)}}
+		bwb := newBlockchainWithBackoff[dbBlock, dbTransaction, struct{}](client, 5*time.Second, 100*time.Millisecond, logger.Nop{})
+
+		_, err := bwb.GetBlockResult(t.Context(), 5)
+		require.ErrorIs(t, err, ErrInvalidData)
+		require.Equal(t, 1, client.calls)
+	})
 }
 
 func TestRunIterationAbortsOnInvalidData(t *testing.T) {

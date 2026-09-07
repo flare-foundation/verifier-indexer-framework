@@ -33,9 +33,11 @@ var ErrInvalidData = errors.New("invalid data from the node")
 // BlockchainClient defines the operations the indexer requires from a blockchain node.
 //
 // Methods taking a block number must return an error wrapping ErrBlockNotFound
-// when the block does not exist on the node; such errors are not retried.
-// Deterministic processing failures must wrap ErrInvalidData; they are not
-// retried and abort the indexer. All other errors are treated as transient.
+// when the block does not exist on the node; such errors are not retried, except
+// by GetBlockResult, which retries them within the backoff window because the
+// block lies below a tip the node reported. Deterministic processing failures
+// must wrap ErrInvalidData; they are not retried and abort the indexer. All
+// other errors are treated as transient.
 type BlockchainClient[B database.Block, T database.Transaction, E database.Event] interface {
 	// GetLatestBlockInfo returns the number and timestamp of the latest block.
 	GetLatestBlockInfo(context.Context) (*BlockInfo, error)
@@ -718,7 +720,7 @@ func (ix *Indexer[B, T, E]) newBackoff(ctx context.Context) backoff.BackOff {
 // permanentIfSentinel marks the BlockchainClient error sentinels as permanent so
 // a retry loop stops on them instead of burning the whole backoff window.
 func permanentIfSentinel(err error) error {
-	if errors.Is(err, ErrInvalidData) || errors.Is(err, ErrBlockNotFound) {
+	if isSentinel(err) {
 		return backoff.Permanent(err)
 	}
 

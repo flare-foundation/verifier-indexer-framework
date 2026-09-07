@@ -33,13 +33,24 @@ func newBlockchainWithBackoff[B database.Block, T database.Transaction, E databa
 	}
 }
 
+// isSentinel reports whether err wraps a BlockchainClient sentinel.
+func isSentinel(err error) bool {
+	return errors.Is(err, ErrBlockNotFound) || errors.Is(err, ErrInvalidData)
+}
+
+// isInvalidData reports whether err wraps ErrInvalidData.
+func isInvalidData(err error) bool {
+	return errors.Is(err, ErrInvalidData)
+}
+
 // retryWithBackoff executes the given operation with exponential backoff, applying
-// a per-request timeout on each attempt. Errors wrapping ErrBlockNotFound or
-// ErrInvalidData are permanent and returned without retrying.
+// a per-request timeout on each attempt. Errors the permanent predicate accepts
+// are returned without retrying.
 func retryWithBackoff[B database.Block, T database.Transaction, E database.Event, R any](
 	ctx context.Context,
 	bwb *blockchainWithBackoff[B, T, E],
 	opName string,
+	permanent func(error) bool,
 	op func(context.Context) (R, error),
 ) (R, error) {
 	var result R
@@ -49,7 +60,7 @@ func retryWithBackoff[B database.Block, T database.Transaction, E database.Event
 			defer cancel()
 
 			result, err = op(ctx)
-			if err != nil && (errors.Is(err, ErrBlockNotFound) || errors.Is(err, ErrInvalidData)) {
+			if err != nil && permanent(err) {
 				return backoff.Permanent(err)
 			}
 
@@ -70,28 +81,30 @@ func retryWithBackoff[B database.Block, T database.Transaction, E database.Event
 
 // GetLatestBlockInfo retrieves the latest block info from the blockchain with retry.
 func (bwb *blockchainWithBackoff[B, T, E]) GetLatestBlockInfo(ctx context.Context) (*BlockInfo, error) {
-	return retryWithBackoff[B, T, E](ctx, bwb, "GetLatestBlockInfo", bwb.client.GetLatestBlockInfo)
+	return retryWithBackoff[B, T, E](ctx, bwb, "GetLatestBlockInfo", isSentinel, bwb.client.GetLatestBlockInfo)
 }
 
 // GetBlockResult retrieves the block result for the given block number with retry.
+// Not-found is retried: the block is below a tip the node reported, so the
+// answer usually comes from a lagging backend of a load-balanced endpoint.
 func (bwb *blockchainWithBackoff[B, T, E]) GetBlockResult(ctx context.Context, blockNumber uint64) (*BlockResult[B, T, E], error) {
-	return retryWithBackoff[B, T, E](ctx, bwb, "GetBlockResult", func(ctx context.Context) (*BlockResult[B, T, E], error) {
+	return retryWithBackoff[B, T, E](ctx, bwb, "GetBlockResult", isInvalidData, func(ctx context.Context) (*BlockResult[B, T, E], error) {
 		return bwb.client.GetBlockResult(ctx, blockNumber)
 	})
 }
 
 // GetBlockTimestamp retrieves the timestamp for the given block number with retry.
+// Not-found is permanent: the start-block search probes pruned blocks and must
+// not spend the backoff window on each.
 func (bwb *blockchainWithBackoff[B, T, E]) GetBlockTimestamp(ctx context.Context, blockNumber uint64) (uint64, error) {
-	return retryWithBackoff[B, T, E](ctx, bwb, "GetBlockTimestamp", func(ctx context.Context) (uint64, error) {
+	return retryWithBackoff[B, T, E](ctx, bwb, "GetBlockTimestamp", isSentinel, func(ctx context.Context) (uint64, error) {
 		return bwb.client.GetBlockTimestamp(ctx, blockNumber)
 	})
 }
 
 // GetServerInfo retrieves the server version string from the blockchain node with retry.
 func (bwb *blockchainWithBackoff[B, T, E]) GetServerInfo(ctx context.Context) (string, error) {
-	return retryWithBackoff[B, T, E](ctx, bwb, "GetServerInfo", func(ctx context.Context) (string, error) {
-		return bwb.client.GetServerInfo(ctx)
-	})
+	return retryWithBackoff[B, T, E](ctx, bwb, "GetServerInfo", isSentinel, bwb.client.GetServerInfo)
 }
 
 // newBackoff creates a new context-aware exponential backoff with the configured max elapsed time.
