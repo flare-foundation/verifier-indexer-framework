@@ -131,7 +131,7 @@ When `history_drop` is configured (in seconds), the indexer periodically prunes 
 
 - A history drop is triggered when `history_drop_frequency` seconds (defaults to `history_drop`) have elapsed since the last drop.
 - It runs asynchronously in a background goroutine so it does not block the main indexing loop.
-- Entities are deleted in the order returned by `HistoryDropOrder` to respect foreign key constraints (e.g., transactions and events before blocks).
+- Entities are deleted in the order returned by `HistoryDropOrder`, block entity first: consumers gate coverage on the block row, so it must never outlive its transactions and events. The order is validated at startup.
 - Deletions happen in batches of 1000 rows to avoid long-running database locks.
 - Only one history drop runs at a time — if one is already in progress, the next iteration skips it.
 - The first-indexed-block boundary is persisted before any rows are deleted, so the stored state never advertises blocks that have already been removed.
@@ -201,7 +201,7 @@ type Block interface {
 ```
 
 The struct should have GORM tags defining the table schema.
-`HistoryDropOrder` returns the list of entity types (as zero-value instances) that should be deleted during history pruning, ordered to respect foreign key constraints (e.g., transactions before blocks).
+`HistoryDropOrder` returns the list of entity types (as zero-value instances) that should be deleted during history pruning. The block entity must come first: a consumer that finds the block row treats the range as covered, so the row must not outlive the transactions and events it vouches for. A foreign key onto the block table, if you declare one, must be `ON DELETE CASCADE`, which also makes each batch atomic. When `history_drop` is enabled the framework refuses an empty order or one that does not start with the block table.
 
 Each entity returned by `HistoryDropOrder` must implement `database.Deletable`:
 
@@ -391,7 +391,7 @@ The key structure is:
 
 1. Define your DB entity structs with GORM tags.
 2. Implement `database.Block` on your block struct.
-3. Implement `database.Deletable` on entities included in `HistoryDropOrder`.
+3. Implement `database.Deletable` on entities included in `HistoryDropOrder`, block first.
 4. Implement `indexer.BlockchainClient` to talk to your chain's RPC.
 5. Implement `config.EnvOverrideable` for any custom config.
 6. Call `framework.Run` from `main`.

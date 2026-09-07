@@ -81,9 +81,10 @@ func (e dbBlock) GetTimestamp() uint64 {
 	return e.Timestamp
 }
 
-// HistoryDropOrder returns the deletion order, children before parents.
+// HistoryDropOrder returns the deletion order: blocks first, so a block row
+// never outlives its transactions.
 func (b dbBlock) HistoryDropOrder() []database.Deletable {
-	return []database.Deletable{dbTransaction{}, dbBlock{}}
+	return []database.Deletable{dbBlock{}, dbTransaction{}}
 }
 
 // TimestampField returns the database column name used for timestamp-based deletion.

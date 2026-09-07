@@ -127,7 +127,7 @@ func (b dbBlock) GetTimestamp() uint64 {
 func (b dbBlock) HistoryDropOrder() []database.Deletable {
 	var emptyBlock dbBlock
 	var emptyTransaction dbTransaction
-	return []database.Deletable{emptyTransaction, emptyBlock}
+	return []database.Deletable{emptyBlock, emptyTransaction}
 }
 
 // Required for Deletable interface.

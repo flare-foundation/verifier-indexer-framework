@@ -38,7 +38,7 @@ func (db *DB[B, T, E]) DropHistoryIteration(
 		return nil, err
 	}
 
-	// Delete in the order specified by HistoryDropOrder to avoid foreign key constraint violations.
+	// Blocks first, as New validated: a block row is the consumer's coverage token and must not outlive its transactions.
 	for _, entity := range b.HistoryDropOrder() {
 		if err := deleteInBatches(ctx, db.g, deleteStart, entity); err != nil {
 			return nil, err
@@ -144,6 +144,41 @@ func blockTimestampField[B Block](namer schema.Namer, b B) (string, error) {
 		"block entity %T does not implement database.Deletable and no HistoryDropOrder entry maps its table: "+
 			"declare TimestampField on the type used to instantiate the framework", b,
 	)
+}
+
+// validateHistoryDropOrder checks the order the block entity declares for the
+// drop: non-empty, with the block table first. A block row is the consumer's
+// coverage token, so it must not outlive the rows it vouches for.
+func validateHistoryDropOrder[B Block](namer schema.Namer, b B) error {
+	order := b.HistoryDropOrder()
+	if len(order) == 0 {
+		return errors.New("HistoryDropOrder is empty: nothing would be pruned while history_drop is set")
+	}
+
+	blockTable, err := tableName(namer, b)
+	if err != nil {
+		return err
+	}
+
+	for i, entity := range order {
+		table, err := tableName(namer, entity)
+		if err != nil {
+			return err
+		}
+
+		if table != blockTable {
+			continue
+		}
+
+		if i != 0 {
+			return fmt.Errorf("HistoryDropOrder must list the block table %q first, found it at position %d: "+
+				"a block row must not outlive its transactions", blockTable, i)
+		}
+
+		return nil
+	}
+
+	return fmt.Errorf("HistoryDropOrder does not include the block table %q", blockTable)
 }
 
 // tableName resolves the table a model maps to.

@@ -22,7 +22,7 @@ func (b conflictBlock) GetBlockNumber() uint64 { return b.BlockNumber }
 func (b conflictBlock) GetTimestamp() uint64   { return b.Timestamp }
 func (b conflictBlock) TimestampField() string { return "timestamp" }
 func (b conflictBlock) HistoryDropOrder() []Deletable {
-	return []Deletable{conflictTx{}, conflictBlock{}}
+	return []Deletable{conflictBlock{}, conflictTx{}}
 }
 
 // conflictTx carries a default:null column — the class UpdateAll drops.

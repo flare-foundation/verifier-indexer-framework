@@ -18,7 +18,7 @@ func (b *ptrBlock) GetBlockNumber() uint64 { return b.BlockNumber }
 func (b *ptrBlock) GetTimestamp() uint64   { return b.Timestamp }
 func (b *ptrBlock) TimestampField() string { return "timestamp" }
 func (b *ptrBlock) HistoryDropOrder() []Deletable {
-	return []Deletable{&ptrTx{}, &ptrBlock{}}
+	return []Deletable{&ptrBlock{}, &ptrTx{}}
 }
 
 type ptrTx struct {
@@ -50,7 +50,7 @@ type orderPtrBlock struct {
 
 func (b orderPtrBlock) GetBlockNumber() uint64        { return b.BlockNumber }
 func (b orderPtrBlock) GetTimestamp() uint64          { return b.Timestamp }
-func (b orderPtrBlock) HistoryDropOrder() []Deletable { return []Deletable{&ptrTx{}, &orderPtrBlock{}} }
+func (b orderPtrBlock) HistoryDropOrder() []Deletable { return []Deletable{&orderPtrBlock{}, &ptrTx{}} }
 func (b *orderPtrBlock) TimestampField() string       { return "closed_at" }
 
 func TestBlockTimestampFieldUsesInstantiatedMethodSet(t *testing.T) {

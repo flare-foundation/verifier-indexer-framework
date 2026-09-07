@@ -37,7 +37,8 @@ type Block interface {
 	// GetBlockNumber returns the block's sequential number on the chain.
 	GetBlockNumber() uint64
 	// HistoryDropOrder returns the entities to delete during history pruning,
-	// ordered to respect foreign key constraints.
+	// block entity first: a block row must not outlive its transactions. A
+	// foreign key onto the block table must cascade.
 	HistoryDropOrder() []Deletable
 }
 

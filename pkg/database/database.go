@@ -123,6 +123,11 @@ func New[B Block, T Transaction, E Event](cfg *config.DB, entities ExternalEntit
 			closeOnError()
 			return nil, err
 		}
+
+		if err := validateHistoryDropOrder(db.NamingStrategy, *new(B)); err != nil {
+			closeOnError()
+			return nil, err
+		}
 	}
 
 	return &DB[B, T, E]{g: db, log: log, conflicts: &conflicts}, nil

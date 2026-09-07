@@ -196,3 +196,19 @@ func TestNewRejectsBlockWithoutTimestampField(t *testing.T) {
 	require.ErrorContains(t, err, "does not implement database.Deletable")
 	require.Nil(t, db)
 }
+
+// TestNewRejectsTransactionFirstDropOrder pins the startup guard on the delete
+// order: transactions first leaves block rows whose transactions are gone.
+func TestNewRejectsTransactionFirstDropOrder(t *testing.T) {
+	cfg := conflictTestDB(t)
+	cfg.HistoryDrop = 3600
+
+	db, err := New(cfg, ExternalEntities[txFirstBlock, conflictTx, struct{}]{
+		Block:       new(txFirstBlock),
+		Transaction: new(conflictTx),
+		Event:       new(struct{}),
+	}, logger.Nop{})
+
+	require.ErrorContains(t, err, "must list the block table")
+	require.Nil(t, db)
+}
