@@ -57,24 +57,28 @@ func (ix *Indexer[B, T, E]) getMinBlockWithinHistoryInterval(
 
 	firstBlockTime, err := ix.blockchain.GetBlockTimestamp(ctx, ix.startBlockNumber)
 	if err != nil {
-		// Only a block genuinely absent from the node may move the start block;
-		// any other failure aborts the startup instead of silently raising it.
-		if !errors.Is(err, ErrBlockNotFound) {
-			if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-				ix.log.Warnf(
-					"start block %d probe failed with an error that does not wrap ErrBlockNotFound: %v; "+
-						"if this block is pruned from the node, wrap indexer.ErrBlockNotFound so the "+
-						"oldest available block can be found instead",
-					ix.startBlockNumber, err,
-				)
-			}
-
+		// a shutdown, or a node that only times out, is not a pruned block
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return 0, fmt.Errorf("failed to get timestamp for configured start block %d: %w", ix.startBlockNumber, err)
 		}
 
-		ix.log.Warnf("configured start block %d not found on the node, looking for the oldest available block instead", ix.startBlockNumber)
+		probe := ix.sentinelProbe
+		if errors.Is(err, ErrBlockNotFound) {
+			ix.log.Warnf("configured start block %d not found on the node, looking for the oldest available block instead", ix.startBlockNumber)
+		} else {
+			// v1.1.1 clients report a pruned block with a plain error. The retry
+			// window has absorbed transient failures, but a persistent one on
+			// exactly this block moves the start block as it did then.
+			ix.log.Warnf(
+				"start block %d probe failed with an error that does not wrap ErrBlockNotFound: %v; "+
+					"treating the block as pruned as v1.1.1 did and looking for the oldest available block "+
+					"with unretried probes; wrap indexer.ErrBlockNotFound so this is not guessed",
+				ix.startBlockNumber, err,
+			)
+			probe = ix.legacyProbe
+		}
 
-		start, findErr := ix.findBlockOnTheNode(ctx, ix.startBlockNumber, latestBlock.BlockNumber)
+		start, findErr := ix.findBlockOnTheNode(ctx, ix.startBlockNumber, latestBlock.BlockNumber, probe)
 		if findErr != nil {
 			return 0, fmt.Errorf("failed to find a block within numbers %d, %d: %w", ix.startBlockNumber, latestBlock.BlockNumber, findErr)
 		}
@@ -137,14 +141,47 @@ func (ix *Indexer[B, T, E]) findEarliestBlockInInterval(
 	return result, nil
 }
 
-// findBlockOnTheNode returns the lowest block number in [low, high] for which
-// the node can serve a timestamp, using binary search. It assumes availability
-// is monotonic: if block k is served, every block above k is too. Only errors
-// wrapping ErrBlockNotFound count as absent blocks; any other error aborts the
-// search.
+// blockProbe reports whether the node serves a block during the oldest-block
+// search; an error aborts the search.
+type blockProbe func(ctx context.Context, blockNumber uint64) (bool, error)
+
+// sentinelProbe is the retried probe for clients that wrap ErrBlockNotFound:
+// only that sentinel counts as absent.
+func (ix *Indexer[B, T, E]) sentinelProbe(ctx context.Context, blockNumber uint64) (bool, error) {
+	_, err := ix.blockchain.GetBlockTimestamp(ctx, blockNumber)
+
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, ErrBlockNotFound):
+		return false, nil
+	default:
+		return false, err
+	}
+}
+
+// legacyProbe is v1.1.1's unretried probe for clients that report a pruned
+// block with a plain error: any failure counts as absent, so a retried probe
+// would spend the whole backoff window on every pruned block of the search.
+func (ix *Indexer[B, T, E]) legacyProbe(ctx context.Context, blockNumber uint64) (bool, error) {
+	probeCtx, cancel := context.WithTimeout(ctx, ix.requestTimeout)
+	defer cancel()
+
+	_, err := ix.rawBlockchain.GetBlockTimestamp(probeCtx, blockNumber)
+	if ctx.Err() != nil {
+		return false, ctx.Err()
+	}
+
+	return err == nil, nil
+}
+
+// findBlockOnTheNode returns the lowest block number in [low, high] the probe
+// reports as served, using binary search. It assumes availability is monotonic:
+// if block k is served, every block above k is too.
 func (ix *Indexer[B, T, E]) findBlockOnTheNode(
 	ctx context.Context,
 	low, high uint64,
+	probe blockProbe,
 ) (uint64, error) {
 	if low > high {
 		return 0, errors.New("invalid boundaries")
@@ -155,12 +192,12 @@ func (ix *Indexer[B, T, E]) findBlockOnTheNode(
 	for low <= high {
 		mid := low + (high-low)/2
 
-		_, err := ix.blockchain.GetBlockTimestamp(ctx, mid)
+		present, err := probe(ctx, mid)
 		if err != nil {
-			if !errors.Is(err, ErrBlockNotFound) {
-				return 0, fmt.Errorf("failed to get timestamp for block %d during search: %w", mid, err)
-			}
+			return 0, fmt.Errorf("failed to probe block %d during search: %w", mid, err)
+		}
 
+		if !present {
 			low = mid + 1
 			continue
 		}

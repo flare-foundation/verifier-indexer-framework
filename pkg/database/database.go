@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/config"
@@ -33,9 +32,10 @@ type ExternalEntities[B Block, T Transaction, E Event] struct {
 
 // DB wraps a gorm.DB connection with generic type parameters for block, transaction, and event entities.
 type DB[B Block, T Transaction, E Event] struct {
-	g         *gorm.DB
-	log       logger.Logger
-	conflicts entityConflicts
+	g   *gorm.DB
+	log logger.Logger
+	// a pointer keeps DB comparable, as on v1.1.1: the clauses hold slices
+	conflicts *entityConflicts
 }
 
 // stateTable returns the state table's name as the naming strategy derives it.
@@ -119,17 +119,18 @@ func New[B Block, T Transaction, E Event](cfg *config.DB, entities ExternalEntit
 
 	// Reject an unusable block entity now, not a retention window from now.
 	if cfg.HistoryDrop > 0 {
-		if _, err := blockTimestampField(*new(B)); err != nil {
+		if _, err := blockTimestampField(db.NamingStrategy, *new(B)); err != nil {
 			closeOnError()
 			return nil, err
 		}
 	}
 
-	return &DB[B, T, E]{g: db, log: log, conflicts: conflicts}, nil
+	return &DB[B, T, E]{g: db, log: log, conflicts: &conflicts}, nil
 }
 
-// deriveConflicts builds each entity's ON CONFLICT clause, rejecting one the
-// framework cannot persist. Runs after AutoMigrate: same schema it validated.
+// deriveConflicts builds each entity's ON CONFLICT clause, keeping v1.1.1's
+// skip where the schema allows no overwrite. Runs after AutoMigrate: same
+// schema it validated.
 func deriveConflicts[B Block, T Transaction, E Event](db *gorm.DB, log logger.Logger) (entityConflicts, error) {
 	var conflicts entityConflicts
 
@@ -150,16 +151,16 @@ func deriveConflicts[B Block, T Transaction, E Event](db *gorm.DB, log logger.Lo
 	}
 
 	for _, entity := range entities {
-		conflict, unmatched, err := overwriteConflict(db.NamingStrategy, entity.model)
+		conflict, skipReason, err := conflictClause(db.NamingStrategy, entity.model)
 		if err != nil {
 			return entityConflicts{}, fmt.Errorf("%s entity: %w", entity.name, err)
 		}
 
-		if len(unmatched) != 0 {
+		if skipReason != "" {
 			log.Warnf(
-				"%s entity has unique constraints the primary-key conflict target cannot arbitrate (%s): "+
-					"re-indexing a range will fail with a unique violation instead of overwriting rows",
-				entity.name, strings.Join(unmatched, ", "),
+				"%s entity has %s: conflicting rows are skipped instead of overwritten, "+
+					"so re-indexing cannot repair them; make the chain identity the primary key to overwrite instead",
+				entity.name, skipReason,
 			)
 		}
 
@@ -249,8 +250,8 @@ func (db *DB[B, T, E]) GetState(ctx context.Context) (*State, error) {
 // SaveAllEntities persists blocks, transactions, events, and indexer state in a
 // single database transaction. Entity rows are overwritten on primary-key
 // conflict, so re-indexing repairs values older code derived; a column the
-// current code leaves empty is reset to its default. A conflict on any other
-// unique constraint fails instead of overwriting (New warns at startup).
+// current code leaves empty is reset to its default. An entity the schema does
+// not let the framework overwrite keeps v1.1.1's skip (New warns at startup).
 //
 // The state row is upserted so the indexing loop only ever writes the columns
 // it owns. On conflict it updates the chain- and last-indexed-progress columns
@@ -342,6 +343,23 @@ func indexingStateAssignments(table string) clause.Set {
 // guard must not apply.
 func (db *DB[B, T, E]) SaveState(ctx context.Context, state *State) error {
 	return db.g.WithContext(ctx).Save(state).Error
+}
+
+// SaveChainTip persists the chain-tip columns the poll owns and nothing else,
+// inserting the state row on a fresh database. Written after every successful
+// poll so the row keeps moving while no batch is saved.
+func (db *DB[B, T, E]) SaveChainTip(ctx context.Context, state *State) error {
+	return db.g.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "id"}},
+		DoUpdates: clause.AssignmentColumns([]string{
+			"last_chain_block_number", "last_chain_block_timestamp", "last_chain_block_updated",
+		}),
+	}).Create(&State{
+		ID:                      globalStateID,
+		LastChainBlockNumber:    state.LastChainBlockNumber,
+		LastChainBlockTimestamp: state.LastChainBlockTimestamp,
+		LastChainBlockUpdated:   state.LastChainBlockUpdated,
+	}).Error
 }
 
 // SaveVersion persists the given version record to the database.

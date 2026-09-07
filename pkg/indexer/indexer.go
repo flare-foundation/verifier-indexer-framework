@@ -47,7 +47,8 @@ type BlockchainClient[B database.Block, T database.Transaction, E database.Event
 	GetServerInfo(context.Context) (string, error)
 }
 
-// DB defines the database operations required by the indexer.
+// DB defines the database operations required by the indexer. Implementations
+// may also satisfy StateSaver and ChainTipSaver; the framework's own does.
 type DB[B database.Block, T database.Transaction, E database.Event] interface {
 	// SaveAllEntities persists blocks, transactions, events, and state atomically.
 	// It establishes the first-indexed boundary only from the empty sentinel and
@@ -60,10 +61,6 @@ type DB[B database.Block, T database.Transaction, E database.Event] interface {
 		events []*E,
 		state *database.State,
 	) error
-	// SaveState persists the full state row authoritatively, used when the caller
-	// holds the authoritative first-indexed boundary (applying a history drop
-	// result or resuming past unindexed blocks).
-	SaveState(ctx context.Context, state *database.State) error
 	// GetState retrieves the current indexer state.
 	GetState(ctx context.Context) (*database.State, error)
 	// DropHistoryIteration deletes entities older than the given interval.
@@ -72,6 +69,39 @@ type DB[B database.Block, T database.Transaction, E database.Event] interface {
 		state *database.State,
 		intervalSeconds, lastBlockTime uint64,
 	) (*database.State, error)
+}
+
+// upToDatePollMaxInterval caps the wait between chain polls once the indexer is
+// caught up.
+const upToDatePollMaxInterval = time.Minute
+
+// UpToDatePollMaxWait is the longest gap jitter can put between two polls of a
+// caught-up indexer; the health endpoint derives its chain-age allowance from it.
+const UpToDatePollMaxWait = upToDatePollMaxInterval + upToDatePollMaxInterval/2
+
+// newUpToDateBackoff paces polls while nothing is indexable. The randomization
+// factor is pinned so UpToDatePollMaxWait stays true.
+func newUpToDateBackoff() *backoff.ExponentialBackOff {
+	return backoff.NewExponentialBackOff(
+		backoff.WithMaxElapsedTime(0),
+		backoff.WithMaxInterval(upToDatePollMaxInterval),
+		backoff.WithRandomizationFactor(0.5),
+	)
+}
+
+// StateSaver persists the full state row authoritatively, for callers holding
+// the first-indexed boundary. Without it the indexer writes through
+// SaveAllEntities as on v1.1.1.
+type StateSaver interface {
+	SaveState(ctx context.Context, state *database.State) error
+}
+
+// ChainTipSaver persists only the chain-tip columns after every successful poll,
+// so the stored row keeps moving while no batch is saved. Without it the tip
+// moves only with batch saves and the health endpoint cannot see a node outage
+// while the indexer is caught up.
+type ChainTipSaver interface {
+	SaveChainTip(ctx context.Context, state *database.State) error
 }
 
 // BlockInfo holds the block number and timestamp for a single block.
@@ -101,17 +131,18 @@ func New[B database.Block, T database.Transaction, E database.Event](
 	cfg *config.Base, db DB[B, T, E], blockchain BlockchainClient[B, T, E], log logger.Logger,
 ) Indexer[B, T, E] {
 	backoffMaxElapsedTime := time.Duration(cfg.Timeout.BackoffMaxElapsedTimeSeconds) * time.Second
+	requestTimeout := time.Duration(cfg.Timeout.RequestTimeoutMillis) * time.Millisecond
 	historyDropFrequency := cfg.DB.HistoryDropFrequency
 	if historyDropFrequency == 0 {
 		historyDropFrequency = cfg.DB.HistoryDrop
 	}
 
+	warnLegacyDB(cfg, db, log)
+
 	return Indexer[B, T, E]{
-		blockchain: newBlockchainWithBackoff(
-			blockchain, backoffMaxElapsedTime,
-			time.Duration(cfg.Timeout.RequestTimeoutMillis)*time.Millisecond,
-			log,
-		),
+		blockchain:            newBlockchainWithBackoff(blockchain, backoffMaxElapsedTime, requestTimeout, log),
+		rawBlockchain:         blockchain,
+		requestTimeout:        requestTimeout,
 		confirmations:         cfg.Indexer.Confirmations,
 		db:                    db,
 		maxBlockRange:         cfg.Indexer.MaxBlockRange,
@@ -125,10 +156,28 @@ func New[B database.Block, T database.Transaction, E database.Event](
 	}
 }
 
+// warnLegacyDB names the optional DB methods the implementation lacks and what
+// that costs.
+func warnLegacyDB[B database.Block, T database.Transaction, E database.Event](cfg *config.Base, db DB[B, T, E], log logger.Logger) {
+	// only history-drop paths write the state row authoritatively
+	if _, ok := db.(StateSaver); !ok && cfg.DB.HistoryDrop > 0 {
+		log.Warn("database does not implement indexer.StateSaver: boundary moves are written through " +
+			"SaveAllEntities as on v1.1.1; add SaveState")
+	}
+
+	if _, ok := db.(ChainTipSaver); !ok && cfg.Health.Enabled {
+		log.Warn("database does not implement indexer.ChainTipSaver: the chain tip moves only with batch " +
+			"saves, so the health endpoint cannot see a node outage while caught up; add SaveChainTip")
+	}
+}
+
 // Indexer continuously fetches blocks from a blockchain and stores them in a
 // database, with support for history pruning and configurable concurrency.
 type Indexer[B database.Block, T database.Transaction, E database.Event] struct {
-	blockchain            BlockchainClient[B, T, E]
+	blockchain BlockchainClient[B, T, E]
+	// rawBlockchain is the unretried client, kept for the v1.1.1 start-block search.
+	rawBlockchain         BlockchainClient[B, T, E]
+	requestTimeout        time.Duration
 	confirmations         uint64
 	db                    DB[B, T, E]
 	maxBlockRange         uint64
@@ -145,7 +194,7 @@ type Indexer[B database.Block, T database.Transaction, E database.Event] struct 
 // Run starts the indexer loop, fetching and persisting blocks until the context
 // is cancelled or the configured end block is reached.
 func (ix *Indexer[B, T, E]) Run(ctx context.Context) error {
-	upToDateBackoff := backoff.NewExponentialBackOff(backoff.WithMaxElapsedTime(0))
+	upToDateBackoff := newUpToDateBackoff()
 	historyDropResults := make(chan *database.State, 1)
 	var historyDropLock sync.Mutex
 
@@ -229,7 +278,7 @@ func (ix *Indexer[B, T, E]) getInitialStartBlockNumber(ctx context.Context, stat
 	state.FirstIndexedBlockNumber = historyDropStartBlock
 	state.FirstIndexedBlockTimestamp = firstBlockTime
 
-	if err := ix.db.SaveState(ctx, state); err != nil {
+	if err := ix.saveState(ctx, state); err != nil {
 		return 0, fmt.Errorf("failed to persist state when resuming past unindexed blocks: %w", err)
 	}
 
@@ -260,6 +309,11 @@ func (ix *Indexer[B, T, E]) runIteration(
 			newState, err := ix.updateChainState(ctx, state)
 			if err != nil {
 				return permanentIfSentinel(err)
+			}
+
+			// every poll, so the stored row reflects the node while nothing is saved
+			if err := ix.saveChainTip(ctx, newState); err != nil {
+				return fmt.Errorf("failed to persist chain tip: %w", err)
 			}
 
 			ix.log.Debugf("updated chain state: %+v", newState)
@@ -411,7 +465,7 @@ func (ix *Indexer[B, T, E]) pollHistoryDropResults(
 		// regular save can only ever raise the boundary from zero, so it cannot
 		// move it to the value computed here — including a reset back to zero
 		// when the drop emptied the database.
-		if err := ix.db.SaveState(ctx, state); err != nil {
+		if err := ix.saveState(ctx, state); err != nil {
 			return fmt.Errorf("failed to save state after history drop: %w", err)
 		}
 
@@ -615,9 +669,6 @@ func (ix *Indexer[B, T, E]) saveData(ctx context.Context, results *iterationResu
 // updateChainState fetches the latest block info from the chain and returns
 // an updated state with the current chain head.
 func (ix *Indexer[B, T, E]) updateChainState(ctx context.Context, state *database.State) (*database.State, error) {
-	newState := *state
-	newState.LastChainBlockUpdated = uint64(time.Now().Unix())
-
 	blockInfo, err := ix.blockchain.GetLatestBlockInfo(ctx)
 	if err != nil {
 		return nil, err
@@ -627,10 +678,32 @@ func (ix *Indexer[B, T, E]) updateChainState(ctx context.Context, state *databas
 		return nil, fmt.Errorf("%w: GetLatestBlockInfo returned no result", ErrInvalidData)
 	}
 
+	newState := *state
 	newState.LastChainBlockNumber = blockInfo.BlockNumber
 	newState.LastChainBlockTimestamp = blockInfo.Timestamp
+	newState.LastChainBlockUpdated = uint64(time.Now().Unix())
 
 	return &newState, nil
+}
+
+// saveState writes the state row authoritatively, or through SaveAllEntities
+// for a v1.1.1 database.
+func (ix *Indexer[B, T, E]) saveState(ctx context.Context, state *database.State) error {
+	if saver, ok := ix.db.(StateSaver); ok {
+		return saver.SaveState(ctx, state)
+	}
+
+	return ix.db.SaveAllEntities(ctx, nil, nil, nil, state)
+}
+
+// saveChainTip persists the poll result where the database can take it alone.
+func (ix *Indexer[B, T, E]) saveChainTip(ctx context.Context, state *database.State) error {
+	saver, ok := ix.db.(ChainTipSaver)
+	if !ok {
+		return nil
+	}
+
+	return saver.SaveChainTip(ctx, state)
 }
 
 // newBackoff creates a new exponential backoff with the indexer's configured max

@@ -11,6 +11,7 @@ import (
 
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/config"
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/health"
+	"github.com/flare-foundation/verifier-indexer-framework/pkg/indexer"
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/logger"
 )
 
@@ -65,6 +66,8 @@ func newHealthServer(cfg *config.Base, source health.StateSource, log logger.Log
 // healthOptions resolves the predicate's thresholds, deriving any left at zero
 // from configuration the operator already had to set.
 func healthOptions(cfg *config.Base) health.Options {
+	queryTimeout := time.Duration(cfg.Timeout.RequestTimeoutMillis) * time.Millisecond
+
 	maxBlockLag := cfg.Health.MaxBlockLag
 	if maxBlockLag == 0 {
 		maxBlockLag = cfg.Indexer.Confirmations + cfg.Indexer.MaxBlockRange
@@ -75,11 +78,19 @@ func healthOptions(cfg *config.Base) health.Options {
 		maxProgressAge = 2 * worstCaseIteration(cfg)
 	}
 
+	maxChainAge := time.Duration(cfg.Health.MaxChainAgeSeconds) * time.Second
+	if maxChainAge == 0 {
+		// twice the longest gap between two successful polls: a worst-case
+		// iteration while catching up, or the longest jittered wait while caught up
+		maxChainAge = 2 * (max(worstCaseIteration(cfg), indexer.UpToDatePollMaxWait) + queryTimeout)
+	}
+
 	return health.Options{
 		Confirmations:  cfg.Indexer.Confirmations,
 		MaxBlockLag:    maxBlockLag,
 		MaxProgressAge: maxProgressAge,
-		QueryTimeout:   time.Duration(cfg.Timeout.RequestTimeoutMillis) * time.Millisecond,
+		MaxChainAge:    maxChainAge,
+		QueryTimeout:   queryTimeout,
 		CacheTTL:       time.Duration(cfg.Health.CacheMillis) * time.Millisecond,
 	}
 }

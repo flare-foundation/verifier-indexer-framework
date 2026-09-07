@@ -22,6 +22,7 @@ type mockDB struct {
 	blocks       [][]*dbBlock
 	transactions [][]*dbTransaction
 	states       []*database.State
+	chainTips    []database.State
 	stored       *database.State
 	saveErr      error
 }
@@ -85,6 +86,25 @@ func (m *mockDB) SaveState(ctx context.Context, state *database.State) error {
 
 	stored := *state
 	m.stored = &stored
+
+	return nil
+}
+
+// SaveChainTip mirrors the column-scoped upsert.
+func (m *mockDB) SaveChainTip(ctx context.Context, state *database.State) error {
+	if m.saveErr != nil {
+		return m.saveErr
+	}
+
+	m.chainTips = append(m.chainTips, *state)
+
+	if m.stored == nil {
+		m.stored = &database.State{}
+	}
+
+	m.stored.LastChainBlockNumber = state.LastChainBlockNumber
+	m.stored.LastChainBlockTimestamp = state.LastChainBlockTimestamp
+	m.stored.LastChainBlockUpdated = state.LastChainBlockUpdated
 
 	return nil
 }
@@ -202,6 +222,94 @@ func TestIndexer(t *testing.T) {
 	require.Len(t, db.transactions[0], 3) // Three transactions
 	require.Len(t, db.states, 1)
 	require.Equal(t, state, db.states[0])
+}
+
+// legacyDB exposes only the v1.1.1 DB methods.
+type legacyDB struct {
+	inner *mockDB
+}
+
+func (l *legacyDB) SaveAllEntities(
+	ctx context.Context, blocks []*dbBlock, transactions []*dbTransaction, events []*struct{}, state *database.State,
+) error {
+	return l.inner.SaveAllEntities(ctx, blocks, transactions, events, state)
+}
+
+func (l *legacyDB) GetState(ctx context.Context) (*database.State, error) {
+	return l.inner.GetState(ctx)
+}
+
+func (l *legacyDB) DropHistoryIteration(
+	ctx context.Context, state *database.State, intervalSeconds, lastBlockTime uint64,
+) (*database.State, error) {
+	return l.inner.DropHistoryIteration(ctx, state, intervalSeconds, lastBlockTime)
+}
+
+var (
+	_ DB[dbBlock, dbTransaction, struct{}] = &legacyDB{}
+	_ StateSaver                           = &mockDB{}
+	_ ChainTipSaver                        = &mockDB{}
+)
+
+// TestLegacyDBFallsBack pins the v1.1.1 paths for a database without the
+// optional writers: the state goes through SaveAllEntities and the chain tip is
+// not written at all.
+func TestLegacyDBFallsBack(t *testing.T) {
+	inner := &mockDB{}
+	ix := Indexer[dbBlock, dbTransaction, struct{}]{db: &legacyDB{inner: inner}, log: logger.Nop{}}
+	state := &database.State{FirstIndexedBlockNumber: 5, LastIndexedBlockNumber: 9}
+
+	require.NoError(t, ix.saveState(t.Context(), state))
+	require.Len(t, inner.states, 1)
+	require.Equal(t, state, inner.states[0])
+
+	require.NoError(t, ix.saveChainTip(t.Context(), state))
+	require.Empty(t, inner.chainTips)
+}
+
+// TestRunIterationPersistsChainTipWhileUpToDate pins the write the health
+// endpoint depends on.
+func TestRunIterationPersistsChainTipWhileUpToDate(t *testing.T) {
+	db := &mockDB{}
+	ix := Indexer[dbBlock, dbTransaction, struct{}]{
+		blockchain: &timestampBlockchain{
+			timestamps: map[uint64]uint64{},
+			latest:     &BlockInfo{BlockNumber: 5, Timestamp: 5000},
+		},
+		confirmations:         100, // tip below confirmations, so nothing is indexable
+		db:                    db,
+		maxBlockRange:         10,
+		maxConcurrency:        1,
+		backoffMaxElapsedTime: time.Minute,
+		log:                   logger.Nop{},
+	}
+
+	upToDateBackoff := backoff.NewExponentialBackOff(
+		backoff.WithMaxElapsedTime(0),
+		backoff.WithInitialInterval(time.Millisecond),
+		backoff.WithMaxInterval(time.Millisecond),
+	)
+
+	var historyDropLock sync.Mutex
+	before := uint64(time.Now().Unix())
+
+	state, err := ix.runIteration(
+		t.Context(),
+		&database.State{LastIndexedBlockNumber: 1, LastIndexedBlockUpdated: 1},
+		&historyDropLock,
+		make(chan *database.State, 1),
+		upToDateBackoff,
+	)
+	require.NoError(t, err)
+	require.Equal(t, uint64(5), state.LastChainBlockNumber)
+
+	require.Empty(t, db.states, "nothing to index, so no batch save")
+	require.Len(t, db.chainTips, 1)
+	require.NotNil(t, db.stored)
+	require.Equal(t, uint64(5), db.stored.LastChainBlockNumber)
+	require.Equal(t, uint64(5000), db.stored.LastChainBlockTimestamp)
+	require.GreaterOrEqual(t, db.stored.LastChainBlockUpdated, before)
+	require.Zero(t, db.stored.LastIndexedBlockNumber, "only the chain-tip columns may move")
 }
 
 // TestRunIterationHonoursContextWhileUpToDate pins graceful shutdown for a
@@ -914,7 +1022,7 @@ func TestFindBlockOnTheNode(t *testing.T) {
 				log:        logger.Nop{},
 			}
 
-			result, err := ix.findBlockOnTheNode(t.Context(), tc.low, tc.high)
+			result, err := ix.findBlockOnTheNode(t.Context(), tc.low, tc.high, ix.sentinelProbe)
 			if tc.wantErr {
 				require.Error(t, err)
 			} else {
@@ -931,13 +1039,41 @@ func TestFindBlockOnTheNode(t *testing.T) {
 			log:        logger.Nop{},
 		}
 
-		_, err := ix.findBlockOnTheNode(t.Context(), 1, 10)
+		_, err := ix.findBlockOnTheNode(t.Context(), 1, 10, ix.sentinelProbe)
 		require.ErrorContains(t, err, "during search")
+	})
+
+	t.Run("legacy probe counts any failure as absent", func(t *testing.T) {
+		// Blocks 1 to 4 fail with a plain error, as a v1.1.1 client reports a pruned block.
+		chain := &timestampBlockchain{
+			timestamps: map[uint64]uint64{5: 1, 6: 1, 7: 1, 8: 1, 9: 1, 10: 1},
+			transient:  map[uint64]bool{1: true, 2: true, 3: true, 4: true},
+		}
+		ix := &Indexer[dbBlock, dbTransaction, struct{}]{
+			blockchain: chain, rawBlockchain: chain, requestTimeout: time.Second, log: logger.Nop{},
+		}
+
+		result, err := ix.findBlockOnTheNode(t.Context(), 1, 10, ix.legacyProbe)
+		require.NoError(t, err)
+		require.Equal(t, uint64(5), result)
+	})
+
+	t.Run("legacy probe still aborts on shutdown", func(t *testing.T) {
+		chain := &timestampBlockchain{timestamps: map[uint64]uint64{5: 1}}
+		ix := &Indexer[dbBlock, dbTransaction, struct{}]{
+			blockchain: chain, rawBlockchain: chain, requestTimeout: time.Second, log: logger.Nop{},
+		}
+
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+
+		_, err := ix.findBlockOnTheNode(ctx, 1, 10, ix.legacyProbe)
+		require.ErrorIs(t, err, context.Canceled)
 	})
 }
 
 func TestGetMinBlockWithinHistoryInterval(t *testing.T) {
-	t.Run("transient failure on the start block aborts instead of moving it", func(t *testing.T) {
+	t.Run("a plain failure on the start block falls back to the v1.1.1 search", func(t *testing.T) {
 		// Blocks above the start block must be available, or the subtest passes
 		// for the wrong reason: the search would fail either way.
 		timestamps := make(map[uint64]uint64, 81)
@@ -945,20 +1081,51 @@ func TestGetMinBlockWithinHistoryInterval(t *testing.T) {
 			timestamps[n] = n * 10
 		}
 
+		chain := &timestampBlockchain{
+			timestamps: timestamps,
+			transient:  map[uint64]bool{10: true},
+			latest:     &BlockInfo{BlockNumber: 100, Timestamp: 1000},
+		}
 		ix := &Indexer[dbBlock, dbTransaction, struct{}]{
-			blockchain: &timestampBlockchain{
-				timestamps: timestamps,
-				transient:  map[uint64]bool{10: true},
-				latest:     &BlockInfo{BlockNumber: 100, Timestamp: 1000},
-			},
+			blockchain:          chain,
+			rawBlockchain:       chain,
+			requestTimeout:      time.Second,
+			startBlockNumber:    10,
+			historyDropInterval: 200,
+			log:                 logger.Nop{},
+		}
+
+		// A client that never wraps the sentinel: the block reads as pruned, the
+		// unretried search lands on 20 and the boundary on the first block within 200s.
+		result, err := ix.getMinBlockWithinHistoryInterval(t.Context())
+		require.NoError(t, err)
+		require.Equal(t, uint64(20), ix.startBlockNumber)
+		require.Equal(t, uint64(80), result)
+	})
+
+	t.Run("a timeout on the start block aborts instead of guessing", func(t *testing.T) {
+		timestamps := make(map[uint64]uint64, 81)
+		for n := uint64(20); n <= 100; n++ {
+			timestamps[n] = n * 10
+		}
+
+		chain := &timestampBlockchain{
+			timestamps: timestamps,
+			timeouts:   map[uint64]bool{10: true},
+			latest:     &BlockInfo{BlockNumber: 100, Timestamp: 1000},
+		}
+		ix := &Indexer[dbBlock, dbTransaction, struct{}]{
+			blockchain:          chain,
+			rawBlockchain:       chain,
+			requestTimeout:      time.Second,
 			startBlockNumber:    10,
 			historyDropInterval: 200,
 			log:                 logger.Nop{},
 		}
 
 		_, err := ix.getMinBlockWithinHistoryInterval(t.Context())
-		require.Error(t, err)
-		require.Equal(t, uint64(10), ix.startBlockNumber, "start block must not move on a transient failure")
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		require.Equal(t, uint64(10), ix.startBlockNumber, "a node that only times out must not move the start block")
 	})
 
 	t.Run("start block ahead of the chain tip waits instead of failing", func(t *testing.T) {
@@ -1070,6 +1237,7 @@ func TestRunIterationAbortsOnInvalidData(t *testing.T) {
 type timestampBlockchain struct {
 	timestamps map[uint64]uint64
 	transient  map[uint64]bool
+	timeouts   map[uint64]bool
 	latest     *BlockInfo
 }
 
@@ -1087,6 +1255,10 @@ func (t *timestampBlockchain) GetBlockResult(context.Context, uint64) (*BlockRes
 func (t *timestampBlockchain) GetBlockTimestamp(_ context.Context, blockNumber uint64) (uint64, error) {
 	if t.transient[blockNumber] {
 		return 0, errors.New("connection reset")
+	}
+
+	if t.timeouts[blockNumber] {
+		return 0, context.DeadlineExceeded
 	}
 
 	ts, ok := t.timestamps[blockNumber]

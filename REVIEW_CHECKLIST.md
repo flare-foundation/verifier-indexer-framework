@@ -30,14 +30,14 @@ All items from the original automated review have been resolved:
 
 ### Configuration & Build
 
-- [x] Verify `config.ReadFile` behavior when TOML file has unknown keys — they were silently ignored; `ReadFile` now inspects `MetaData.Undecoded()` and rejects them
+- [x] Verify `config.ReadFile` behavior when TOML file has unknown keys — they were silently ignored; `config.Decode` now returns them and the framework warns at startup, while `ReadFile` keeps ignoring them
 - [ ] Verify `config.ReadBuildVersion` works correctly when run from different working directories (reads relative paths: `PROJECT_VERSION`, `PROJECT_BUILD_DATE`, `PROJECT_COMMIT_HASH`)
 - [ ] Check that `DefaultBase` defaults are sensible for production use
 - [ ] Confirm `DropTableAtStart` intentionally does NOT drop the `Version` table (only `State`, blocks, transactions, events)
 
 ### Database Layer
 
-- [x] Review the conflict strategy for all entity types — `OnConflict{UpdateAll: true}` emitted a target-free `DO UPDATE` that PostgreSQL rejects for a primary-key-less entity. The clause is now derived from the parsed schema (primary key as conflict target, update set from the schema rather than the batch), and entities without a primary key are refused at startup
+- [x] Review the conflict strategy for all entity types — `OnConflict{UpdateAll: true}` emitted a target-free `DO UPDATE` that PostgreSQL rejects for a primary-key-less entity. The clause is now derived from the parsed schema (primary key as conflict target, update set from the schema rather than the batch), and an entity without a primary key keeps the skip-on-conflict clause, with a startup warning
 - [ ] Review `SaveAllEntities` transaction isolation level (GORM default is `READ COMMITTED` on Postgres)
 - [ ] Validate that `transactionBatchSize = 1000` and `deleteBatchSize = 1000` are appropriate for expected data volumes
 - [ ] Confirm `formatDSN` properly handles special characters in username/password (uses `url.UserPassword` which should URL-encode)

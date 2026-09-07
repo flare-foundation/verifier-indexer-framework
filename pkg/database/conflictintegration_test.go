@@ -63,20 +63,64 @@ func conflictTestDB(t *testing.T) *config.DB {
 	return &cfg.DB
 }
 
-// TestNewRejectsEntityWithoutPrimaryKey pins the startup guard: without it
-// SaveAllEntities emits SQL PostgreSQL rejects, so nothing persists at all.
-func TestNewRejectsEntityWithoutPrimaryKey(t *testing.T) {
-	db, err := New(conflictTestDB(t), ExternalEntities[noPKBlock, conflictTx, struct{}]{
+// surrogateTx is the v1.1.1 shape the overwrite cannot serve: a sequence id and
+// a unique hash, so re-indexing conflicts on hash with a fresh id.
+type surrogateTx struct {
+	ID          uint   `gorm:"primaryKey;autoIncrement"`
+	Hash        string `gorm:"uniqueIndex"`
+	BlockNumber uint64 `gorm:"index"`
+	Timestamp   uint64 `gorm:"index"`
+}
+
+// TestNewAcceptsEntityWithoutPrimaryKey pins the v1.1.1 fallback: such an
+// entity starts, with the target-free skip PostgreSQL accepts.
+func TestNewAcceptsEntityWithoutPrimaryKey(t *testing.T) {
+	// noPKBlock carries no timestamp column, so history drop stays off here.
+	cfg := conflictTestDB(t)
+	cfg.HistoryDrop = 0
+
+	db, err := New(cfg, ExternalEntities[noPKBlock, conflictTx, struct{}]{
 		Block:       new(noPKBlock),
 		Transaction: new(conflictTx),
 		Event:       new(struct{}),
 	}, logger.Nop{})
-	if db != nil {
-		defer db.Close() //nolint:errcheck // best-effort cleanup in a test
-	}
+	require.NoError(t, err)
+	defer db.Close()                                           //nolint:errcheck // best-effort cleanup in a test
+	defer db.g.Migrator().DropTable(noPKBlock{}, conflictTx{}) //nolint:errcheck // best-effort cleanup in a test
 
-	require.ErrorIs(t, err, ErrNoPrimaryKey)
-	require.Nil(t, db)
+	block := noPKBlock{BlockNumber: 1, Timestamp: 1000}
+	require.NoError(t, db.SaveAllEntities(context.Background(), []*noPKBlock{&block}, nil, nil, nil))
+}
+
+// TestSaveAllEntitiesSkipsConflictBeyondPrimaryKey pins the v1.1.1 semantic for
+// the shape that crashed with a unique violation when overwriting on id.
+func TestSaveAllEntitiesSkipsConflictBeyondPrimaryKey(t *testing.T) {
+	ctx := context.Background()
+
+	db, err := New(conflictTestDB(t), ExternalEntities[conflictBlock, surrogateTx, struct{}]{
+		Block:       new(conflictBlock),
+		Transaction: new(surrogateTx),
+		Event:       new(struct{}),
+	}, logger.Nop{})
+	require.NoError(t, err)
+	defer db.Close()                                                //nolint:errcheck // best-effort cleanup in a test
+	defer db.g.Migrator().DropTable(surrogateTx{}, conflictBlock{}) //nolint:errcheck // best-effort cleanup in a test
+
+	require.NoError(t, db.g.Migrator().DropTable(surrogateTx{}, conflictBlock{}))
+	require.NoError(t, db.g.AutoMigrate(&conflictBlock{}, &surrogateTx{}))
+
+	block := conflictBlock{BlockNumber: 1, Timestamp: 1000}
+	first := surrogateTx{Hash: "a", BlockNumber: 1, Timestamp: 1000}
+	require.NoError(t, db.SaveAllEntities(ctx, []*conflictBlock{&block}, []*surrogateTx{&first}, nil, nil))
+
+	// Same hash, fresh sequence id: v1.1.1 skipped it, the overwrite raised.
+	again := surrogateTx{Hash: "a", BlockNumber: 2, Timestamp: 1000}
+	require.NoError(t, db.SaveAllEntities(ctx, []*conflictBlock{&block}, []*surrogateTx{&again}, nil, nil))
+
+	var stored []surrogateTx
+	require.NoError(t, db.g.Find(&stored).Error)
+	require.Len(t, stored, 1)
+	require.Equal(t, uint64(1), stored[0].BlockNumber, "a skipped row keeps its original value")
 }
 
 // TestSaveAllEntitiesRepairsDefaultNullColumn pins the update set to the schema

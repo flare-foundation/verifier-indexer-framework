@@ -18,6 +18,7 @@ import (
 const (
 	StatusReady        = "ready"
 	StatusInitializing = "initializing"
+	StatusChainStale   = "chain_stale"
 	StatusCatchingUp   = "catching_up"
 	StatusStalled      = "stalled"
 	StatusUnavailable  = "unavailable"
@@ -40,6 +41,9 @@ type Options struct {
 	// MaxProgressAge is how stale the last progress write may be, once blocks are
 	// known to be pending, before the indexer counts as stalled.
 	MaxProgressAge time.Duration
+	// MaxChainAge is how old the last successful chain poll may be before the
+	// stored view of the chain, and every check resting on it, stops counting.
+	MaxChainAge time.Duration
 	// QueryTimeout bounds one state read.
 	QueryTimeout time.Duration
 	// CacheTTL bounds how often a request reaches the database, measured from the
@@ -58,8 +62,10 @@ type Report struct {
 	LastChainBlockNumber    uint64 `json:"last_chain_block_number"`
 	BlockLag                uint64 `json:"block_lag"`
 	ProgressAgeSeconds      uint64 `json:"progress_age_seconds"`
+	ChainAgeSeconds         uint64 `json:"chain_age_seconds"`
 	MaxBlockLag             uint64 `json:"max_block_lag"`
 	MaxProgressAgeSeconds   uint64 `json:"max_progress_age_seconds"`
+	MaxChainAgeSeconds      uint64 `json:"max_chain_age_seconds"`
 	CheckedAt               int64  `json:"checked_at"`
 }
 
@@ -100,6 +106,10 @@ func Handler(source StateSource, opts Options, log logger.Logger) (http.Handler,
 
 	if opts.MaxProgressAge <= 0 {
 		return nil, errors.New("health: max progress age must be positive")
+	}
+
+	if opts.MaxChainAge <= 0 {
+		return nil, errors.New("health: max chain age must be positive")
 	}
 
 	return &checker{source: source, opts: opts, log: log, now: time.Now}, nil
@@ -164,6 +174,7 @@ func (c *checker) evaluate(ctx context.Context) Report {
 	report := Report{
 		MaxBlockLag:           c.opts.MaxBlockLag,
 		MaxProgressAgeSeconds: uint64(c.opts.MaxProgressAge.Seconds()),
+		MaxChainAgeSeconds:    uint64(c.opts.MaxChainAge.Seconds()),
 		CheckedAt:             c.now().Unix(),
 	}
 
@@ -182,11 +193,15 @@ func (c *checker) evaluate(ctx context.Context) Report {
 	report.LastIndexedBlockNumber = state.LastIndexedBlockNumber
 	report.LastChainBlockNumber = state.LastChainBlockNumber
 	report.BlockLag = blockLag(state)
-	report.ProgressAgeSeconds = c.progressAge(state)
+	report.ProgressAgeSeconds = c.age(state.LastIndexedBlockUpdated)
+	report.ChainAgeSeconds = c.age(state.LastChainBlockUpdated)
 
 	switch {
 	case emptyRange(state):
 		report.Status = StatusInitializing
+	case report.ChainAgeSeconds > report.MaxChainAgeSeconds:
+		// Before the lag checks: they compare against a tip nobody has refreshed.
+		report.Status = StatusChainStale
 	case report.BlockLag > c.opts.MaxBlockLag:
 		report.Status = StatusCatchingUp
 	case report.BlockLag > c.opts.Confirmations && report.ProgressAgeSeconds > report.MaxProgressAgeSeconds:
@@ -218,15 +233,15 @@ func emptyRange(state *database.State) bool {
 		state.FirstIndexedBlockNumber > state.LastIndexedBlockNumber
 }
 
-// progressAge returns the age of the last progress write. A stamp in the future
-// reads as zero rather than wrapping.
-func (c *checker) progressAge(state *database.State) uint64 {
-	if state.LastIndexedBlockUpdated == 0 {
+// age returns how old a Unix stamp is. Zero means never written, and a stamp
+// in the future reads as zero rather than wrapping.
+func (c *checker) age(stamp uint64) uint64 {
+	if stamp == 0 {
 		return 0
 	}
 
 	now := c.now().Unix()
-	written := int64(state.LastIndexedBlockUpdated)
+	written := int64(stamp)
 
 	if now <= written {
 		return 0

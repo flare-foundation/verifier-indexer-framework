@@ -40,6 +40,8 @@ func TestHealthOptions(t *testing.T) {
 		require.Equal(t, uint64(12+1000), opts.MaxBlockLag)
 		// ceil(1000/8) rounds to 125 fetch rounds of 3s, doubled.
 		require.Equal(t, 750*time.Second, opts.MaxProgressAge)
+		// The 375s iteration beats the 90s jittered poll wait; plus one 3s poll, doubled.
+		require.Equal(t, 756*time.Second, opts.MaxChainAge)
 		require.Equal(t, 3*time.Second, opts.QueryTimeout)
 		require.Equal(t, time.Second, opts.CacheTTL)
 		require.Equal(t, uint64(12), opts.Confirmations)
@@ -49,13 +51,23 @@ func TestHealthOptions(t *testing.T) {
 		cfg := healthTestConfig(":0")
 		cfg.Health.MaxBlockLag = 50
 		cfg.Health.MaxProgressAgeSeconds = 90
+		cfg.Health.MaxChainAgeSeconds = 45
 		cfg.Health.CacheMillis = 0
 
 		opts := healthOptions(cfg)
 
 		require.Equal(t, uint64(50), opts.MaxBlockLag)
 		require.Equal(t, 90*time.Second, opts.MaxProgressAge)
+		require.Equal(t, 45*time.Second, opts.MaxChainAge)
 		require.Zero(t, opts.CacheTTL)
+	})
+
+	t.Run("a short iteration lets the poll wait bound the chain allowance", func(t *testing.T) {
+		cfg := healthTestConfig(":0")
+		cfg.Indexer.MaxBlockRange = 8
+
+		// One 3s fetch round is under the 90s jittered poll wait; plus one 3s poll, doubled.
+		require.Equal(t, 186*time.Second, healthOptions(cfg).MaxChainAge)
 	})
 
 	t.Run("a low concurrency lengthens the derived progress allowance", func(t *testing.T) {

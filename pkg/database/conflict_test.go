@@ -50,16 +50,15 @@ func TestOverwriteConflict(t *testing.T) {
 	tests := []struct {
 		name              string
 		model             any
-		expectedErr       error
+		expectedSkip      string
 		expectedTarget    []string
 		expectedUpdates   []string
 		expectedDoNothing bool
-		expectedUnmatched []string
 	}{
 		{
-			name:        "no primary key is rejected",
-			model:       new(noPKEntity),
-			expectedErr: ErrNoPrimaryKey,
+			name:         "no primary key keeps the v1.1.1 skip",
+			model:        new(noPKEntity),
+			expectedSkip: "no primary key",
 		},
 		{
 			name:            "natural primary key overwrites every other column",
@@ -75,12 +74,10 @@ func TestOverwriteConflict(t *testing.T) {
 			expectedUpdates: []string{"response", "payment_reference", "destination_tag"},
 		},
 		{
-			name:  "sequence primary key reports the unique index it cannot arbitrate",
-			model: new(surrogatePKEntity),
-			// id is database-computed, so it is never overwritten.
-			expectedTarget:    []string{"id"},
-			expectedUpdates:   []string{"hash", "block_number"},
-			expectedUnmatched: []string{"idx_surrogate_pk_entities_hash"},
+			// Overwriting on id would raise a unique violation on hash instead.
+			name:         "sequence primary key with a unique index keeps the v1.1.1 skip",
+			model:        new(surrogatePKEntity),
+			expectedSkip: "idx_surrogate_pk_entities_hash",
 		},
 		{
 			name:              "entity of only a primary key skips the update",
@@ -98,13 +95,17 @@ func TestOverwriteConflict(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			conflict, unmatched, err := overwriteConflict(testNamer(), tc.model)
-			if tc.expectedErr != nil {
-				require.ErrorIs(t, err, tc.expectedErr)
+			conflict, skipReason, err := conflictClause(testNamer(), tc.model)
+			require.NoError(t, err)
+
+			if tc.expectedSkip != "" {
+				require.Contains(t, skipReason, tc.expectedSkip)
+				require.True(t, conflict.DoNothing)
+				require.Empty(t, conflict.Columns, "the v1.1.1 skip names no target")
 				return
 			}
 
-			require.NoError(t, err)
+			require.Empty(t, skipReason)
 
 			target := make([]string, 0, len(conflict.Columns))
 			for _, col := range conflict.Columns {
@@ -119,8 +120,6 @@ func TestOverwriteConflict(t *testing.T) {
 				updates = append(updates, assignment.Column.Name)
 			}
 			require.ElementsMatch(t, tc.expectedUpdates, updates)
-
-			require.ElementsMatch(t, tc.expectedUnmatched, unmatched)
 		})
 	}
 }

@@ -4,20 +4,21 @@
 
 ### Added
 
-- `indexer.ErrBlockNotFound` sentinel: `BlockchainClient` implementations must return it (wrapped) for blocks genuinely missing on the node. Not-found errors are never retried, and only they may move the start block during history drop start-up; any other startup probe failure now aborts instead of silently raising the start block.
+- `indexer.ErrBlockNotFound` sentinel: `BlockchainClient` implementations should return it (wrapped) for blocks genuinely missing on the node. Not-found errors are never retried, and a pruned start block is searched for with retried probes. A client that reports a pruned start block with a plain error still works: once the retry window is exhausted the framework warns and falls back to v1.1.1's unretried search, where any failure counts as absent, so a persistent plain failure on exactly the start block can still move it as it did then.
+- `indexer.StateSaver` and `indexer.ChainTipSaver`: optional interfaces a `DB` implementation may satisfy (the framework's own does) for the authoritative state write and the per-poll chain-tip write. Without them the indexer writes the state through `SaveAllEntities` and the chain tip only with batch saves, and warns at startup.
+- `config.Decode` returns the configuration keys the file declares but the framework does not know, so a caller can warn or reject; `config.ReadFile` keeps ignoring them. The framework warns about them at startup.
 - `indexer.ErrInvalidData` sentinel for deterministic processing failures (e.g. a transaction in a validated block that fails to parse). Such errors abort the indexer immediately with a clear error instead of being retried through the full backoff window before each crash.
 
 - Optional readiness endpoint: with `[health] enabled = true` the framework serves `GET /health` on `listen_address` (default `:8080`), returning 200 when the advertised indexed range is current and 503 with a JSON status otherwise. Off by default — no port is opened, no goroutine starts and no code path changes unless it is enabled. The predicate is exported as `health.Handler` for consumers wiring their own stack.
+- `chain_stale` health status and `max_chain_age_seconds`: the endpoint answers 503 when the last successful chain poll is older than the allowance, which derives from the worst-case iteration and the up-to-date poll interval when left at zero. The response carries `chain_age_seconds` and `max_chain_age_seconds`.
 
 ### Changed
 
-- **Breaking:** require Go 1.26.8 (go directive and CI image); `github.com/jackc/pgx/v5` v5.9.2 and `golang.org/x/text` v0.39.0. Earlier toolchains and these earlier dependency versions carry reachable vulnerabilities (`GO-2026-5856`, `GO-2026-5972`, `GO-2026-5004`, `GO-2026-5970`). Consumers must raise their own `go` directive to build. CI now runs `govulncheck` as a non-gating job.
-- **Breaking:** `SaveAllEntities` overwrites existing rows on primary-key conflict (`ON CONFLICT DO UPDATE`) instead of skipping them, so re-indexing a range repairs values derived by older code. Three consequences: every entity must declare a primary key (the framework refuses to start otherwise, and PostgreSQL cannot infer a conflict target without one); rows must be unique by primary key within a single save; and a conflict on any other unique constraint now fails the save instead of being skipped — such entities are warned about at startup. A column the current code leaves empty is reset to its default rather than keeping a stale value.
-- **Breaking:** `indexer.DB` gained `SaveState`, used where the caller holds the authoritative first-indexed boundary. Custom `DB` implementations must add it to compile.
-- **Breaking:** unknown keys in the TOML configuration are now rejected instead of silently ignored, so a mistyped key fails at startup rather than leaving the default in place.
-- When `history_drop` is enabled the block entity must implement `database.Deletable` on its value receiver; this is verified at startup instead of falling back to a hardcoded `timestamp` column.
+- Require Go 1.26.8 (go directive and CI image); `github.com/jackc/pgx/v5` v5.9.2 and `golang.org/x/text` v0.39.0. Earlier toolchains and these earlier dependency versions carry reachable vulnerabilities (`GO-2026-5856`, `GO-2026-5972`, `GO-2026-5004`, `GO-2026-5970`). `go get` raises a consumer's own `go` directive to match. CI now runs `govulncheck` as a non-gating job.
+- `SaveAllEntities` overwrites existing rows on primary-key conflict (`ON CONFLICT DO UPDATE`) instead of skipping them, so re-indexing a range repairs values derived by older code. Rows must be unique by primary key within a single save. An entity without a primary key, or with a unique constraint the primary key cannot arbitrate, keeps v1.1.1's skip-on-conflict clause and is warned about at startup, so re-indexing cannot repair it. A column the current code leaves empty is reset to its default rather than keeping a stale value.
+- The chain tip (`last_chain_block_number`, `last_chain_block_timestamp`, `last_chain_block_updated`) is persisted after every successful poll instead of only with a batch save, so readers of the state row see it move on a caught-up indexer.
+- When `history_drop` is enabled the block table's timestamp column is taken from `database.Deletable` on the method set of the type the framework is instantiated with (pointer receivers count for a pointer block type), or from the `HistoryDropOrder` entry for the block's own table as on v1.1.1; a block with neither is rejected at startup instead of failing at the first drop.
 - The first-indexed-block boundary only ever moves up (except the empty-table reset). Consumers must read a state with `first > last` (or `first == 0`) as an empty advertised range.
-- Removed the internal unretried blockchain client: startup probes now retry transient errors and fail fast on `ErrBlockNotFound`.
 
 ### Fixed
 
@@ -33,6 +34,7 @@
 - A signal-initiated shutdown returns `nil` from `framework.Run` instead of the context error, so the process exits zero.
 - The startup node-version probe is bounded by `request_timeout_millis`; an unresponsive node no longer hangs startup indefinitely.
 - `GetBlockResult` and `GetLatestBlockInfo` returning `(nil, nil)` are reported as a contract violation instead of panicking.
+- The blockchain client is constructed before the database is opened, so an invalid blockchain configuration fails before `drop_table_at_start` can drop anything.
 
 ## [v1.1.1] - 2026-4-17
 

@@ -97,6 +97,7 @@ Each iteration of the main loop performs these steps:
 1. **Update chain state.**
 Fetch the latest block number and timestamp from the blockchain node.
 This is retried with exponential backoff on failure.
+The chain tip is persisted right away, independently of any batch save, so the state row keeps moving while the indexer is caught up.
 2. **Poll history drop results.**
 Check (non-blocking) whether a background history drop has completed.
 If so, apply the updated first-indexed-block state and persist it immediately.
@@ -164,13 +165,14 @@ The predicate is evaluated top-down; the first match wins:
 |---|---|
 | `unavailable` | The indexer state could not be read. |
 | `initializing` | The advertised range is empty (`first == 0` or `first > last`). |
+| `chain_stale` | The last successful chain poll is older than `max_chain_age_seconds`, so the stored chain tip and every check resting on it cannot be trusted. |
 | `catching_up` | The chain head is more than `max_block_lag` ahead of the last indexed block. |
 | `stalled` | Confirmed blocks are pending *and* the last progress write is older than `max_progress_age_seconds`. |
 | `ready` | None of the above. |
 
-Both allowances derive from configuration you already set when left at zero: `max_block_lag` becomes `confirmations + max_block_range` (one full iteration behind the confirmed head), and `max_progress_age_seconds` becomes twice the worst-case iteration, `ceil(max_block_range / max_concurrency) x request_timeout_millis`. Lower `max_concurrency` therefore *lengthens* the allowance, because an iteration can legitimately take longer. The effective values are echoed in every response, so you can read your real steady-state lag off the endpoint and tighten from there.
+All three allowances derive from configuration you already set when left at zero: `max_block_lag` becomes `confirmations + max_block_range` (one full iteration behind the confirmed head); `max_progress_age_seconds` becomes twice the worst-case iteration, `ceil(max_block_range / max_concurrency) x request_timeout_millis`; and `max_chain_age_seconds` becomes twice the longest gap between two polls, which is the worst-case iteration or the longest jittered up-to-date wait (90 s), plus one `request_timeout_millis`. Lower `max_concurrency` therefore *lengthens* the allowances, because an iteration can legitimately take longer. The effective values are echoed in every response, so you can read your real steady-state lag off the endpoint and tighten from there.
 
-The `stalled` check is deliberately gated on the lag exceeding `confirmations`. A caught-up indexer persists nothing between polls, so its progress stamp ages even though nothing is wrong; without the gate the check would fire on any quiet chain.
+The `stalled` check is deliberately gated on the lag exceeding `confirmations`. A caught-up indexer makes no progress between polls, so its progress stamp ages even though nothing is wrong; without the gate the check would fire on any quiet chain.
 
 Kubernetes: use `readinessProbe` and `startupProbe`, and **no `livenessProbe`**. The indexer exits on a persistent error, so the container runtime's restart-on-exit already is the liveness mechanism, and a legitimate backfill answers 503 for its whole duration — a liveness probe would restart-loop the pod. A bounded run (`end_block_number` set) is behind its own end block throughout, so leave the endpoint disabled for such jobs.
 
@@ -179,7 +181,7 @@ Two operational cautions:
 - **Alert on `ready` or the status code, never on a number alone.** The block and age fields read `0` when the status is `unavailable`.
 - The port is unauthenticated and `:8080` binds all interfaces. Restrict it with a network policy, or set `listen_address` to a specific interface. Loopback is not the default because a kubelet `httpGet` probe targets the pod IP.
 
-Known blind spot: a node outage while the indexer is *caught up* is invisible here, because nothing in the state row moves — the lag stays at `confirmations` and the gate stays shut. For a client that honours context this is bounded (the retry window expires and the process exits), but a client that ignores cancellation can hang indefinitely and the endpoint will keep answering 200.
+The chain tip is persisted after every successful poll, so a node outage becomes `chain_stale` even while the indexer is caught up, and a restart against an unreachable node answers 503 for the same reason. A custom `DB` implementation without `indexer.ChainTipSaver` keeps the old blind spot.
 
 `verifier-indexer-api`'s `GET /api/health` is a different service on a different port: it returns the state row with no predicate, answering what data it can serve rather than whether this indexer is caught up.
 
@@ -209,7 +211,7 @@ type Deletable interface {
 }
 ```
 
-When `history_drop` is enabled the block entity itself must implement `database.Deletable`, and it must do so on the **value** receiver — the framework reads the column name from a zero value of your block type, and a pointer-receiver method is invisible there. It is rejected at startup if missing.
+When `history_drop` is enabled the framework needs the block table's timestamp column at startup. It takes it from `database.Deletable` on the method set of the type you instantiate the framework with (a pointer type such as `*Block` may use pointer receivers), or, as on v1.1.1, from the `HistoryDropOrder` entry that maps to the block's own table. A block with neither is rejected at startup rather than at the first drop.
 
 Index both the `TimestampField()` column and `block_number` on every prunable entity:
 
@@ -228,10 +230,10 @@ Any struct with GORM tags.
 There is no required interface — `database.Transaction` is defined as `any`.
 The framework stores these in batches alongside their parent blocks.
 
-**Every entity must declare a primary key**, and it must be the entity's deterministic chain identity (a hash or block number), not a generated sequence. Rows are overwritten on primary-key conflict, so the primary key is the conflict target; the framework refuses to start without one. Two consequences worth knowing:
+**Declare a primary key that is the entity's deterministic chain identity** (a hash or block number), not a generated sequence. Rows are overwritten on primary-key conflict, so re-indexing a range repairs values derived by older code. Two consequences worth knowing:
 
 - Rows must be unique by primary key *within* a single save, or PostgreSQL rejects the whole batch.
-- A conflict on any **other** unique constraint fails the save instead of overwriting the row. The framework logs a warning at startup for entities declaring such constraints.
+- An entity without a primary key, or with a unique constraint the primary key cannot arbitrate (a sequence id next to a unique hash, say), keeps v1.1.1's behaviour: conflicting rows are skipped and never repaired. The framework warns about such entities at startup.
 
 ### 3. Event Entity (Optional)
 
@@ -260,8 +262,9 @@ type BlockchainClient[B Block, T Transaction, E Event] interface {
 
 You do **not** need to implement retry logic — the framework wraps every call with exponential backoff automatically.
 
-Methods taking a block number must return an error wrapping `indexer.ErrBlockNotFound` when the block does not exist on the node (e.g. pruned or not yet available).
-The framework relies on this to distinguish missing blocks from transient failures: not-found errors are never retried, and only they may move the start block to the oldest available block during history drop start-up.
+Methods taking a block number should return an error wrapping `indexer.ErrBlockNotFound` when the block does not exist on the node (e.g. pruned or not yet available).
+The framework relies on this to distinguish missing blocks from transient failures: not-found errors are never retried, and a pruned start block is searched for with retried probes.
+A client that reports a pruned start block with a plain error still works: once the retry window is exhausted the framework warns and falls back to v1.1.1's unretried search, in which any failure counts as absent, so a persistent plain failure on exactly the start block can move it as it did then.
 
 Deterministic processing failures — data in a validated block that the implementation cannot parse — must wrap `indexer.ErrInvalidData`.
 Such errors are not retried and abort the indexer immediately with a clear error: retrying cannot help, and silently skipping data would corrupt the advertised coverage.
@@ -364,6 +367,7 @@ enabled = false                          # Opt-in readiness endpoint; nothing li
 listen_address = ":8080"                 # Listen address (default ":8080"); binds all interfaces
 max_block_lag = 0                        # Max tolerated lag behind the chain head; 0 derives confirmations + max_block_range
 max_progress_age_seconds = 0             # Max age of the last progress write; 0 derives twice the worst-case iteration
+max_chain_age_seconds = 0                # Max age of the last successful chain poll; 0 derives twice the longest poll gap
 cache_millis = 1000                      # Min interval between database reads (default: 1000); 0 reads every request
 
 [logger]
@@ -377,6 +381,8 @@ max_file_size = 0                        # Log file size in megabytes before rot
 ```
 
 All `[db]` credential fields can be overridden with environment variables: `DB_HOST`, `DB_PORT`, `DB_USERNAME`, `DB_PASSWORD`, `DB_NAME`.
+
+Keys the framework does not know are logged as a warning at startup and ignored, so a mistyped key is visible without failing a v1.1.1 deployment.
 
 ## Minimal Working Example
 

@@ -60,6 +60,7 @@ func testOptions() Options {
 		Confirmations:  12,
 		MaxBlockLag:    1012,
 		MaxProgressAge: 600 * time.Second,
+		MaxChainAge:    300 * time.Second,
 		QueryTimeout:   time.Second,
 	}
 }
@@ -91,6 +92,7 @@ func TestHandlerRejectsUnusableInput(t *testing.T) {
 		{name: "no query timeout", source: &fakeSource{}, log: logger.Nop{}, opts: Options{MaxBlockLag: 1, MaxProgressAge: time.Second}},
 		{name: "no lag allowance", source: &fakeSource{}, log: logger.Nop{}, opts: Options{QueryTimeout: time.Second, MaxProgressAge: time.Second}},
 		{name: "no progress allowance", source: &fakeSource{}, log: logger.Nop{}, opts: Options{QueryTimeout: time.Second, MaxBlockLag: 1}},
+		{name: "no chain allowance", source: &fakeSource{}, log: logger.Nop{}, opts: Options{QueryTimeout: time.Second, MaxBlockLag: 1, MaxProgressAge: time.Second}},
 	}
 
 	for _, tc := range tests {
@@ -118,9 +120,25 @@ func TestReportPredicate(t *testing.T) {
 			name: "caught up",
 			state: database.State{
 				FirstIndexedBlockNumber: 780000, LastIndexedBlockNumber: 781234,
-				LastChainBlockNumber: 781246, LastIndexedBlockUpdated: recent,
+				LastChainBlockNumber: 781246, LastIndexedBlockUpdated: recent, LastChainBlockUpdated: recent,
 			},
 			expectedStatus: StatusReady, expectedCode: http.StatusOK, expectedLag: 12,
+		},
+		{
+			name: "caught up but the node has not been reached is chain stale",
+			state: database.State{
+				FirstIndexedBlockNumber: 780000, LastIndexedBlockNumber: 781234,
+				LastChainBlockNumber: 781246, LastIndexedBlockUpdated: recent, LastChainBlockUpdated: stale,
+			},
+			expectedStatus: StatusChainStale, expectedCode: http.StatusServiceUnavailable, expectedLag: 12,
+		},
+		{
+			name: "a stale chain view pre-empts catching up",
+			state: database.State{
+				FirstIndexedBlockNumber: 1, LastIndexedBlockNumber: 1000,
+				LastChainBlockNumber: 2013, LastIndexedBlockUpdated: recent, LastChainBlockUpdated: stale,
+			},
+			expectedStatus: StatusChainStale, expectedCode: http.StatusServiceUnavailable, expectedLag: 1013,
 		},
 		{
 			name:           "fresh database",
@@ -195,6 +213,7 @@ func TestReportPredicate(t *testing.T) {
 			require.Equal(t, tc.expectedLag, report.BlockLag)
 			require.Equal(t, uint64(1012), report.MaxBlockLag, "the effective limits must be echoed")
 			require.Equal(t, uint64(600), report.MaxProgressAgeSeconds)
+			require.Equal(t, uint64(300), report.MaxChainAgeSeconds)
 			require.Equal(t, now.Unix(), report.CheckedAt)
 		})
 	}
@@ -289,11 +308,13 @@ func TestReadTTLRunsFromCompletion(t *testing.T) {
 }
 
 // TestReportOmitsAgeWhenProgressWasNeverWritten guards against reporting the
-// whole Unix epoch as an age.
+// whole Unix epoch as an age, for both stamps.
 func TestReportOmitsAgeWhenProgressWasNeverWritten(t *testing.T) {
 	c := newTestChecker(t, &fakeSource{state: database.State{}}, testOptions(), time.Unix(1_700_000_000, 0))
 
-	require.Zero(t, c.read(context.Background()).ProgressAgeSeconds)
+	report := c.read(context.Background())
+	require.Zero(t, report.ProgressAgeSeconds)
+	require.Zero(t, report.ChainAgeSeconds)
 }
 
 func TestReadIsSafeForConcurrentRequests(t *testing.T) {

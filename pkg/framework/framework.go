@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os/signal"
 	"reflect"
+	"strings"
 	"syscall"
 	"time"
 
@@ -71,7 +72,8 @@ func runWithArgs[B database.Block, C config.EnvOverrideable, T database.Transact
 		Blockchain: allocateIfNil(input.DefaultConfig),
 	}
 
-	if err := config.ReadFile(args.ConfigFile, &cfg); err != nil {
+	unknownKeys, err := config.Decode(args.ConfigFile, &cfg)
+	if err != nil {
 		return err
 	}
 
@@ -90,6 +92,16 @@ func runWithArgs[B database.Block, C config.EnvOverrideable, T database.Transact
 	commonlogger.Set(cfg.Logger)
 	log := logger.Adapter{}
 
+	if len(unknownKeys) != 0 {
+		log.Warnf("unknown configuration keys ignored: %s", strings.Join(unknownKeys, ", "))
+	}
+
+	// before the database: a bad blockchain config must not reach drop_table_at_start
+	bc, err := input.NewBlockchainClient(cfg.Blockchain)
+	if err != nil {
+		return err
+	}
+
 	db, err := database.New(&cfg.DB, database.ExternalEntities[B, T, E]{
 		Block:       new(B),
 		Transaction: new(T),
@@ -99,11 +111,6 @@ func runWithArgs[B database.Block, C config.EnvOverrideable, T database.Transact
 		return err
 	}
 	defer db.Close() //nolint:errcheck // best-effort cleanup on shutdown
-
-	bc, err := input.NewBlockchainClient(cfg.Blockchain)
-	if err != nil {
-		return err
-	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

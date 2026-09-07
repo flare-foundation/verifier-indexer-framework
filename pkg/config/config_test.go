@@ -134,25 +134,26 @@ func TestApplyEnvOverrides(t *testing.T) {
 	})
 }
 
-func TestReadFileRejectsUnknownKeys(t *testing.T) {
+func TestDecodeReportsUnknownKeys(t *testing.T) {
 	tests := []struct {
-		name        string
-		body        string
-		expectedErr string
+		name         string
+		body         string
+		expectedKeys []string
 	}{
 		{
 			name: "known keys decode",
 			body: "[indexer]\nconfirmations = 3\n",
 		},
 		{
-			name:        "mistyped key is reported",
-			body:        "[indexer]\nconfirmation = 3\n",
-			expectedErr: "indexer.confirmation",
+			name:         "mistyped key is reported",
+			body:         "[indexer]\nconfirmation = 3\n",
+			expectedKeys: []string{"indexer.confirmation"},
 		},
 		{
-			name:        "unknown table is reported",
-			body:        "[indexerr]\nconfirmations = 3\n",
-			expectedErr: "indexerr",
+			name: "unknown table is reported",
+			body: "[indexerr]\nconfirmations = 3\n",
+			// BurntSushi reports the unknown table and its keys.
+			expectedKeys: []string{"indexerr", "indexerr.confirmations"},
 		},
 	}
 
@@ -162,13 +163,12 @@ func TestReadFileRejectsUnknownKeys(t *testing.T) {
 			require.NoError(t, os.WriteFile(path, []byte(tc.body), 0o600))
 
 			var cfg Base
-			err := ReadFile(path, &cfg)
-			if tc.expectedErr == "" {
-				require.NoError(t, err)
-				return
-			}
+			keys, err := Decode(path, &cfg)
+			require.NoError(t, err)
+			require.ElementsMatch(t, tc.expectedKeys, keys)
 
-			require.ErrorContains(t, err, tc.expectedErr)
+			// v1.1.1 callers keep decoding whatever the file declares.
+			require.NoError(t, ReadFile(path, &Base{}))
 		})
 	}
 }

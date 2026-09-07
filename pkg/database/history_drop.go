@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"regexp"
+	"sync"
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/schema"
 )
 
 // Only delete up to 1000 items in a single DB transaction to avoid lock
@@ -75,7 +78,7 @@ func (db *DB[B, T, E]) DropHistoryIteration(
 // drop at deleteStart and persists it before any row is deleted. When nothing
 // survives it is emptied: under-advertising is safe, over-advertising is not.
 func (db *DB[B, T, E]) raiseFirstIndexedBoundary(ctx context.Context, b B, state *State, deleteStart uint64) error {
-	timestampCol, err := blockTimestampField(b)
+	timestampCol, err := blockTimestampField(db.g.NamingStrategy, b)
 	if err != nil {
 		return err
 	}
@@ -110,19 +113,51 @@ func (db *DB[B, T, E]) raiseFirstIndexedBoundary(ctx context.Context, b B, state
 	return nil
 }
 
-// blockTimestampField returns the block entity's timestamp column. Only B's
-// value method set counts, so a pointer-receiver TimestampField is reported
-// rather than guessed at.
-func blockTimestampField[B Block](b B) (string, error) {
-	d, ok := any(b).(Deletable)
-	if !ok {
-		return "", fmt.Errorf(
-			"block entity %T does not implement database.Deletable: "+
-				"declare TimestampField on the type used to instantiate the framework", b,
-		)
+// blockTimestampField returns the block entity's timestamp column: from B's own
+// method set, or from the HistoryDropOrder entry for B's table, where v1.1.1
+// only needed it. A pointer B skips the fallback, since its method set already
+// includes every receiver.
+func blockTimestampField[B Block](namer schema.Namer, b B) (string, error) {
+	if d, ok := any(b).(Deletable); ok {
+		return validColumn(d.TimestampField())
 	}
 
-	col := d.TimestampField()
+	if reflect.TypeOf(any(b)).Kind() != reflect.Pointer {
+		table, err := tableName(namer, b)
+		if err != nil {
+			return "", err
+		}
+
+		for _, entity := range b.HistoryDropOrder() {
+			entityTable, err := tableName(namer, entity)
+			if err != nil {
+				return "", err
+			}
+
+			if entityTable == table {
+				return validColumn(entity.TimestampField())
+			}
+		}
+	}
+
+	return "", fmt.Errorf(
+		"block entity %T does not implement database.Deletable and no HistoryDropOrder entry maps its table: "+
+			"declare TimestampField on the type used to instantiate the framework", b,
+	)
+}
+
+// tableName resolves the table a model maps to.
+func tableName(namer schema.Namer, model any) (string, error) {
+	s, err := schema.Parse(model, &sync.Map{}, namer)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse entity schema: %w", err)
+	}
+
+	return s.Table, nil
+}
+
+// validColumn guards a column name that ends up in raw SQL.
+func validColumn(col string) (string, error) {
 	if !validColumnName.MatchString(col) {
 		return "", fmt.Errorf("invalid column name: %q", col)
 	}
@@ -181,9 +216,9 @@ var validColumnName = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 // Postgres does not support LIMIT on DELETE (gorm silently drops it), so the
 // batch is selected by ctid in a subquery.
 func deleteInBatches(ctx context.Context, db *gorm.DB, deleteStart uint64, entity Deletable) error {
-	col := entity.TimestampField()
-	if !validColumnName.MatchString(col) {
-		return fmt.Errorf("invalid column name: %q", col)
+	col, err := validColumn(entity.TimestampField())
+	if err != nil {
+		return err
 	}
 
 	for {

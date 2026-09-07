@@ -3,7 +3,6 @@ package config
 import (
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/BurntSushi/toml"
 	"github.com/caarlos0/env/v11"
@@ -45,6 +44,9 @@ type Health struct {
 	// MaxProgressAgeSeconds of zero derives twice the worst-case iteration
 	// duration; zero never disables a check.
 	MaxProgressAgeSeconds uint64 `toml:"max_progress_age_seconds"`
+	// MaxChainAgeSeconds of zero derives twice the longest gap between two
+	// successful chain polls.
+	MaxChainAgeSeconds uint64 `toml:"max_chain_age_seconds"`
 	// CacheMillis bounds how often a request reaches the database; zero reads it
 	// on every request.
 	CacheMillis int `toml:"cache_millis"`
@@ -102,25 +104,28 @@ var defaultIndexer = Indexer{
 }
 
 // ReadFile decodes a TOML configuration file at the given filepath into cfg.
-// Unknown keys are rejected: a mistyped key would otherwise be dropped
-// silently, leaving the default in place.
+// Unknown keys are ignored as on v1.1.1; Decode reports them.
 func ReadFile[T any](filepath string, cfg T) error {
+	_, err := Decode(filepath, cfg)
+	return err
+}
+
+// Decode decodes the file into cfg and returns the keys it did not recognise,
+// so the caller can warn or reject: a mistyped key otherwise keeps the default
+// silently.
+func Decode[T any](filepath string, cfg T) ([]string, error) {
 	meta, err := toml.DecodeFile(filepath, cfg)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	undecoded := meta.Undecoded()
-	if len(undecoded) == 0 {
-		return nil
-	}
-
 	keys := make([]string, 0, len(undecoded))
 	for _, key := range undecoded {
 		keys = append(keys, key.String())
 	}
 
-	return fmt.Errorf("unknown configuration keys: %s", strings.Join(keys, ", "))
+	return keys, nil
 }
 
 // EnvOverrideable is implemented by configuration types that support overriding

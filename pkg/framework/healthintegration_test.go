@@ -98,6 +98,7 @@ func TestRunServesHealthEndpoint(t *testing.T) {
 	require.Contains(t, []int{http.StatusOK, http.StatusServiceUnavailable}, status)
 	require.Contains(t, body, `"last_indexed_block_number"`)
 	require.Contains(t, body, `"max_block_lag"`)
+	require.Contains(t, body, `"max_chain_age_seconds"`)
 	require.NotContains(t, body, "password", "the response must not leak connection details")
 
 	require.NoError(t, <-done, "a bounded run must finish cleanly with the endpoint enabled")
