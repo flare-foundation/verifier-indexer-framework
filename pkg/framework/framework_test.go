@@ -5,6 +5,7 @@ package framework
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/config"
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/database"
 	"github.com/flare-foundation/verifier-indexer-framework/pkg/indexer"
+	"github.com/flare-foundation/verifier-indexer-framework/pkg/logger"
 	"github.com/joho/godotenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -59,6 +61,107 @@ func TestRun(t *testing.T) {
 	assert.GreaterOrEqual(t, uint64(315), state.FirstIndexedBlockNumber)
 	assert.GreaterOrEqual(t, state.LastIndexedBlockNumber, uint64(509))
 	assert.GreaterOrEqual(t, uint64(512), state.LastIndexedBlockNumber)
+}
+
+// resumeConfig copies the integration config, keeps the tables and starts at
+// startBlock, which the caller places above the retention window's first block.
+func resumeConfig(t *testing.T, startBlock uint64) string {
+	t.Helper()
+
+	configFile := os.Getenv("CONFIG_FILE")
+	if configFile == "" {
+		configFile = defaultConfigFile
+	}
+
+	body, err := os.ReadFile(configFile)
+	require.NoError(t, err)
+
+	text := strings.Replace(string(body), "drop_table_at_start = true", "drop_table_at_start = false", 1)
+	text = strings.Replace(text, "start_block_number = 0", "start_block_number = "+strconv.FormatUint(startBlock, 10), 1)
+	require.Contains(t, text, "drop_table_at_start = false")
+	require.Contains(t, text, "start_block_number = "+strconv.FormatUint(startBlock, 10))
+
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(path, []byte(text), 0o600))
+
+	return path
+}
+
+// TestRunPurgesRowsBelowResumeStart restarts over a database a prior run left
+// behind, with start_block_number raised above its last indexed block. The
+// stale rows sit inside the retention window, so no scheduled drop removes
+// them; only the resume path can. A consumer gates coverage on the block row,
+// so a surviving stale row would vouch for the never-indexed gap.
+func TestRunPurgesRowsBelowResumeStart(t *testing.T) {
+	if err := godotenv.Load(); err != nil {
+		t.Log("No .env file found, proceeding without it")
+	}
+
+	// TestBlockchain: block n has timestamp n+500, the tip starts at 500 and
+	// moves one block per second, retention is 200 s. The window opens near
+	// block 300, so 400 lies above it, and rows 360-390 stay inside the window
+	// for the whole run.
+	const resumeStart, staleFirst, staleLast = uint64(400), uint64(360), uint64(390)
+
+	configFile := resumeConfig(t, resumeStart)
+
+	cfg := config.Base{}
+	require.NoError(t, config.ReadFile(configFile, &cfg))
+	require.NoError(t, cfg.ApplyEnvOverrides())
+
+	seedCfg := cfg.DB
+	seedCfg.DropTableAtStart = true
+	seedDB, err := database.New(&seedCfg, database.ExternalEntities[dbBlock, dbTransaction, struct{}]{
+		Block:       new(dbBlock),
+		Transaction: new(dbTransaction),
+		Event:       new(struct{}),
+	}, logger.Nop{})
+	require.NoError(t, err)
+
+	blocks := make([]*dbBlock, 0, staleLast-staleFirst+1)
+	transactions := make([]*dbTransaction, 0, staleLast-staleFirst+1)
+	for n := staleFirst; n <= staleLast; n++ {
+		blocks = append(blocks, &dbBlock{Hash: testHash("0", n), BlockNumber: n, Timestamp: n + 500})
+		transactions = append(transactions, &dbTransaction{Hash: testHash("e", n), BlockNumber: n, Timestamp: n + 500})
+	}
+
+	now := uint64(time.Now().Unix())
+	priorRun := &database.State{
+		ID:                         1,
+		LastChainBlockNumber:       staleLast + 1,
+		LastChainBlockTimestamp:    staleLast + 501,
+		LastChainBlockUpdated:      now,
+		LastIndexedBlockNumber:     staleLast,
+		LastIndexedBlockTimestamp:  staleLast + 500,
+		LastIndexedBlockUpdated:    now,
+		FirstIndexedBlockNumber:    staleFirst,
+		FirstIndexedBlockTimestamp: staleFirst + 500,
+	}
+	require.NoError(t, seedDB.SaveAllEntities(context.Background(), blocks, transactions, nil, priorRun))
+	require.NoError(t, seedDB.Close())
+
+	input := Input[dbBlock, *ExampleConfig, dbTransaction, struct{}]{
+		NewBlockchainClient: NewTestBlockchain,
+	}
+	require.NoError(t, runWithArgs(input, CLIArgs{ConfigFile: configFile}))
+
+	conn, err := database.Connect(&cfg.DB)
+	require.NoError(t, err)
+
+	state := new(database.State)
+	require.NoError(t, conn.First(state, 1).Error)
+	assert.Equal(t, resumeStart, state.FirstIndexedBlockNumber)
+	assert.GreaterOrEqual(t, state.LastIndexedBlockNumber, uint64(509))
+
+	var staleBlocks, staleTransactions int64
+	require.NoError(t, conn.Model(&dbBlock{}).Where("block_number < ?", resumeStart).Count(&staleBlocks).Error)
+	require.NoError(t, conn.Model(&dbTransaction{}).Where("block_number < ?", resumeStart).Count(&staleTransactions).Error)
+	assert.Zero(t, staleBlocks, "block rows below the boundary remain and vouch for the gap")
+	assert.Zero(t, staleTransactions, "transaction rows below the boundary remain")
+
+	var indexed int64
+	require.NoError(t, conn.Model(&dbBlock{}).Where("block_number >= ?", resumeStart).Count(&indexed).Error)
+	assert.GreaterOrEqual(t, indexed, int64(110), "the range from the new start must be indexed")
 }
 
 type TestBlockchain struct {

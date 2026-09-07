@@ -23,8 +23,17 @@ type mockDB struct {
 	transactions [][]*dbTransaction
 	states       []*database.State
 	chainTips    []database.State
+	drops        []mockDrop
 	stored       *database.State
 	saveErr      error
+}
+
+// mockDrop records one DropHistoryIteration call: its arguments, the boundary
+// it was handed, and how many state writes preceded it.
+type mockDrop struct {
+	interval, lastBlockTime uint64
+	priorBoundary           uint64
+	stateWrites             int
 }
 
 func (m *mockDB) SaveAllEntities(
@@ -124,6 +133,13 @@ func (m *mockDB) DropHistoryIteration(
 	state *database.State,
 	intervalSeconds, lastBlockTime uint64,
 ) (*database.State, error) {
+	m.drops = append(m.drops, mockDrop{
+		interval:      intervalSeconds,
+		lastBlockTime: lastBlockTime,
+		priorBoundary: state.FirstIndexedBlockNumber,
+		stateWrites:   len(m.states),
+	})
+
 	newState := *state
 	newState.LastHistoryDrop = lastBlockTime
 
@@ -592,7 +608,7 @@ func TestGetInitialStartBlockNumber(t *testing.T) {
 		require.Empty(t, db.states)
 	})
 
-	t.Run("resume past unindexed blocks moves and persists the coverage boundary", func(t *testing.T) {
+	t.Run("resume past unindexed blocks purges the rows below the new start, then moves and persists the coverage boundary", func(t *testing.T) {
 		// The stored row already carries a boundary, so only an authoritative
 		// write can move it: the raise-only indexing save cannot.
 		db := &mockDB{stored: &database.State{
@@ -616,8 +632,13 @@ func TestGetInitialStartBlockNumber(t *testing.T) {
 		require.Equal(t, uint64(80), state.FirstIndexedBlockNumber)
 		require.Equal(t, uint64(800), state.FirstIndexedBlockTimestamp)
 
+		require.Len(t, db.drops, 1, "the rows below the new start must be purged")
+		require.Equal(t, mockDrop{interval: 0, lastBlockTime: 800, priorBoundary: 10, stateWrites: 0}, db.drops[0],
+			"purge keyed on the new start's timestamp, handed the state as loaded, before any state write")
+
 		require.Len(t, db.states, 1, "moved boundary must be persisted before indexing begins")
 		require.Equal(t, &state, db.states[0])
+		require.Equal(t, uint64(800), db.states[0].LastHistoryDrop, "the persisted state is the purge result")
 		require.Equal(t, uint64(80), db.stored.FirstIndexedBlockNumber,
 			"the boundary must reach the stored row, which a raise-only save cannot do")
 	})

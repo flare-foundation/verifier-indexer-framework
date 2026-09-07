@@ -20,7 +20,9 @@ const deleteBatchSize = 1000
 // DropHistoryIteration deletes blocks and related entities older than the given
 // interval and updates the state to reflect the new first indexed block. The
 // first-indexed boundary is persisted before any rows are deleted — emptied when
-// nothing survives — so stored state never advertises removed blocks.
+// nothing survives — so stored state never advertises removed blocks. A zero
+// interval deletes everything older than lastBlockTime; the indexer uses it to
+// purge the rows below a resume start block.
 func (db *DB[B, T, E]) DropHistoryIteration(
 	ctx context.Context,
 	state *State,
@@ -69,7 +71,11 @@ func (db *DB[B, T, E]) DropHistoryIteration(
 		return nil, fmt.Errorf("failed to persist state after history drop: %w", err)
 	}
 
-	db.log.Infof("deleted blocks up to index %d", newState.FirstIndexedBlockNumber)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		db.log.Infof("deleted every block older than %d, none remain", deleteStart)
+	} else {
+		db.log.Infof("deleted blocks up to index %d", newState.FirstIndexedBlockNumber)
+	}
 
 	return &newState, nil
 }

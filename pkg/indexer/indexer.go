@@ -65,7 +65,10 @@ type DB[B database.Block, T database.Transaction, E database.Event] interface {
 	) error
 	// GetState retrieves the current indexer state.
 	GetState(ctx context.Context) (*database.State, error)
-	// DropHistoryIteration deletes entities older than the given interval.
+	// DropHistoryIteration deletes every entity whose timestamp is below
+	// lastBlockTime - intervalSeconds, raises the first-indexed boundary to the
+	// first surviving block (empties it when none survives) and returns the
+	// updated state. A zero interval purges the rows below a resume start block.
 	DropHistoryIteration(
 		ctx context.Context,
 		state *database.State,
@@ -264,19 +267,27 @@ func (ix *Indexer[B, T, E]) getInitialStartBlockNumber(ctx context.Context, stat
 	}
 
 	// Indexing resumes ahead of the last indexed block, so the blocks in between
-	// are never indexed. Move the advertised coverage boundary to the new start
-	// block and persist it before indexing begins, so the state never claims the
-	// gap or the stale rows below it as covered.
+	// are never indexed. The rows below the new start go first, before the
+	// boundary moves: a consumer gates coverage on the block row alone, so a
+	// stale row would let it answer over the gap whatever the boundary says.
 	firstBlockTime, err := ix.blockchain.GetBlockTimestamp(ctx, historyDropStartBlock)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get timestamp for resume start block %d: %w", historyDropStartBlock, err)
 	}
 
 	ix.log.Warnf(
-		"resuming from block %d leaves blocks %d to %d unindexed, moving the first indexed block boundary",
+		"resuming from block %d leaves blocks %d to %d unindexed: deleting the rows below it and moving the first indexed block boundary",
 		historyDropStartBlock, state.LastIndexedBlockNumber+1, historyDropStartBlock-1,
 	)
 
+	// A drop with the start's timestamp as cutoff is exactly the purge. The
+	// state goes in as loaded: the drop keys its boundary write on it.
+	purged, err := ix.db.DropHistoryIteration(ctx, state, 0, firstBlockTime)
+	if err != nil {
+		return 0, fmt.Errorf("failed to delete rows below resume start block %d: %w", historyDropStartBlock, err)
+	}
+
+	*state = *purged
 	state.FirstIndexedBlockNumber = historyDropStartBlock
 	state.FirstIndexedBlockTimestamp = firstBlockTime
 
