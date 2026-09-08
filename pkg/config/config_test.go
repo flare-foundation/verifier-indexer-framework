@@ -218,3 +218,30 @@ func TestCheckHealth(t *testing.T) {
 		require.ErrorContains(t, CheckParameters(cfg), "max_block_lag")
 	})
 }
+
+func TestWriterLockDefaults(t *testing.T) {
+	require.True(t, DefaultBase.DB.WriterLock, "the lock must be on unless a config turns it off")
+	require.Equal(t, 60, DefaultBase.DB.WriterLockWaitSeconds)
+
+	cfg := DefaultBase
+	cfg.DB.WriterLockWaitSeconds = -1
+	require.ErrorContains(t, CheckParameters(&cfg), "writer_lock_wait_seconds")
+
+	cfg = DefaultBase
+	cfg.DB.MaxOpenConns = 1
+	require.ErrorContains(t, CheckParameters(&cfg), "max_open_conns", "the lock's connection would starve every query")
+
+	cfg.DB.WriterLock = false
+	if err := CheckParameters(&cfg); err != nil {
+		require.NotContains(t, err.Error(), "max_open_conns")
+	}
+
+	// the default survives a file that does not mention the key
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(path, []byte("[db]\nhost = \"h\"\n"), 0644))
+
+	decoded := DefaultBase
+	require.NoError(t, ReadFile(path, &decoded))
+	require.True(t, decoded.DB.WriterLock)
+	require.Equal(t, 60, decoded.DB.WriterLockWaitSeconds)
+}

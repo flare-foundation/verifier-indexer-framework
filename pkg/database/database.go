@@ -36,6 +36,7 @@ type DB[B Block, T Transaction, E Event] struct {
 	log logger.Logger
 	// a pointer keeps DB comparable, as on v1.1.1: the clauses hold slices
 	conflicts *entityConflicts
+	lock      *writerLock
 }
 
 // stateTable returns the state table's name as the naming strategy derives it.
@@ -51,7 +52,7 @@ func (db *DB[B, T, E]) Close() error {
 		return fmt.Errorf("failed to get underlying sql.DB for close: %w", err)
 	}
 
-	return sqlDB.Close()
+	return errors.Join(db.lock.release(), sqlDB.Close())
 }
 
 // initState returns a new State with the global state primary key.
@@ -77,13 +78,25 @@ func New[B Block, T Transaction, E Event](cfg *config.DB, entities ExternalEntit
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
 	}
 
+	var lock *writerLock
+
 	closeOnError := func() {
+		lock.release() //nolint:errcheck // best-effort cleanup on initialization failure
 		if sqlDB, err := db.DB(); err == nil {
 			sqlDB.Close() //nolint:errcheck // best-effort cleanup on initialization failure
 		}
 	}
 
 	log.Debug("connected to the DB")
+
+	// before drop_table_at_start: a second instance must not touch a live database
+	if cfg.WriterLock {
+		lock, err = acquireWriterLock(db, time.Duration(cfg.WriterLockWaitSeconds)*time.Second, log)
+		if err != nil {
+			closeOnError()
+			return nil, err
+		}
+	}
 
 	if cfg.DropTableAtStart {
 		log.Info("DB tables dropped at start")
@@ -130,7 +143,7 @@ func New[B Block, T Transaction, E Event](cfg *config.DB, entities ExternalEntit
 		}
 	}
 
-	return &DB[B, T, E]{g: db, log: log, conflicts: &conflicts}, nil
+	return &DB[B, T, E]{g: db, log: log, conflicts: &conflicts, lock: lock}, nil
 }
 
 // deriveConflicts builds each entity's ON CONFLICT clause, keeping v1.1.1's

@@ -70,6 +70,11 @@ type DB struct {
 	DropTableAtStart       bool   `toml:"drop_table_at_start"`
 	HistoryDrop            uint64 `toml:"history_drop"`
 	HistoryDropFrequency   uint64 `toml:"history_drop_frequency"`
+	// WriterLock takes a session advisory lock at startup so a second indexer on
+	// the same database fails instead of diverging silently.
+	WriterLock bool `toml:"writer_lock"`
+	// WriterLockWaitSeconds bounds the wait for another indexer to exit.
+	WriterLockWaitSeconds int `toml:"writer_lock_wait_seconds"`
 }
 
 var defaultDB = DB{
@@ -78,6 +83,8 @@ var defaultDB = DB{
 	MaxOpenConns:           25,
 	MaxIdleConns:           5,
 	ConnMaxLifetimeSeconds: 300,
+	WriterLock:             true,
+	WriterLockWaitSeconds:  60,
 }
 
 type TimeoutConfig struct {
@@ -166,6 +173,15 @@ func (cfg *Base) ApplyEnvOverrides() error {
 
 // CheckParameters validates that required configuration fields in Base have acceptable values.
 func CheckParameters(cfg *Base) error {
+	if cfg.DB.WriterLockWaitSeconds < 0 {
+		return errors.New("writer_lock_wait_seconds must not be negative")
+	}
+
+	// the lock holds one connection for the life of the process; zero means unlimited
+	if cfg.DB.WriterLock && cfg.DB.MaxOpenConns == 1 {
+		return errors.New("max_open_conns must be at least 2 while writer_lock is on, or 0 for no limit")
+	}
+
 	if cfg.Indexer.Confirmations == 0 {
 		return errors.New("number of confirmations should be set to a positive integer")
 	}

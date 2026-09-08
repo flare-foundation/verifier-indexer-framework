@@ -40,6 +40,7 @@ For an example of how to integrate please see the `cmd/example` directory.
 - Tracks indexer state: last/first indexed block, latest chain head, last history drop timestamp.
 - Saves build and runtime version metadata.
 - Optionally drops all tables on startup (`drop_table_at_start`).
+- Takes a session advisory lock at startup so a second indexer on the same database fails fast instead of diverging silently (`writer_lock`).
 
 ### Indexer Loop (`pkg/indexer`)
 
@@ -68,10 +69,21 @@ For an example of how to integrate please see the `cmd/example` directory.
 ### Startup
 
 1. `framework.Run` parses CLI arguments, loads the TOML config file, applies environment variable overrides, and validates parameters.
-2. The framework connects to PostgreSQL and auto-migrates all tables — your block, transaction, and event tables plus the internal `state` and `version` tables.
+2. The framework connects to PostgreSQL, takes the writer lock (see below), and auto-migrates all tables — your block, transaction, and event tables plus the internal `state` and `version` tables.
 3. It calls your `NewBlockchainClient` constructor to create the blockchain client.
 4. Build metadata (git tag, commit hash, build date) and the blockchain node version are saved to the `version` table.
 5. The indexer loads its persisted state from the database to determine where to resume.
+
+#### One Writer per Database
+
+Exactly one indexer may write a database. The state row is read once at startup and carried in memory, so two instances never learn about each other and their views diverge without bound; the reachable consumer effect is a nonexistence request refused as `BLOCK DOES NOT EXIST` over data the table holds.
+The framework enforces this with a session advisory lock taken on a dedicated connection right after connecting, before `drop_table_at_start`, and held until shutdown. A second instance waits `writer_lock_wait_seconds` (default 60) for the holder to exit, then fails naming the holder's pid.
+
+- Deploy with a `Recreate` strategy, or without a readiness probe on `/health`: a rolling update that terminates the old pod only once the new one is ready waits on a lock the old pod still holds.
+- Connect directly, or through a pooler in session mode; a transaction-mode pooler does not keep the session that holds the lock.
+- Set `writer_lock = false` for a deliberate second writer, such as a backfill beside the live indexer.
+- A v1.1.1 instance takes no lock, so a mixed rollout from it is unguarded.
+- The lock guards against misconfiguration, not failure: if its connection drops, the instance keeps running without it. The dedicated connection counts against `max_open_conns`.
 
 #### Determining the Start Block
 
@@ -350,6 +362,8 @@ max_idle_conns = 5                  # Max idle connections (default: 5)
 conn_max_lifetime_seconds = 300     # Connection max lifetime (default: 300)
 log_queries = false                 # Log all SQL queries (default: false)
 drop_table_at_start = false         # Drop and recreate tables on startup (default: false)
+writer_lock = true                  # Refuse to start while another indexer holds this database (default: true)
+writer_lock_wait_seconds = 60       # Wait for the holder to exit before failing (default: 60)
 history_drop = 0                    # Delete blocks older than this many seconds; 0 = disabled
 history_drop_frequency = 0          # Seconds between history drops; defaults to history_drop value
 
