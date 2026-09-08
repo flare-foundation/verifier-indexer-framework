@@ -156,6 +156,7 @@ When `history_drop` is configured (in seconds), the indexer periodically prunes 
 - A history drop is triggered when `history_drop_frequency` seconds (defaults to `history_drop`) have elapsed since the last drop.
 - It runs asynchronously in a background goroutine so it does not block the main indexing loop.
 - Entities are deleted in the order returned by `HistoryDropOrder`, block entity first: consumers gate coverage on the block row, so it must never outlive its transactions and events. The order is validated at startup.
+- An entity with a soft-delete field (`gorm.DeletedAt`) is refused at startup: gorm turns a delete on it into an update, so the drop would report success and prune nothing.
 - Deletions happen in batches of 1000 rows to avoid long-running database locks.
 - Only one history drop runs at a time — if one is already in progress, the next iteration skips it.
 - The first-indexed-block boundary is persisted before any rows are deleted, so the stored state never advertises blocks that have already been removed.
@@ -227,7 +228,7 @@ type Block interface {
 ```
 
 The struct should have GORM tags defining the table schema.
-`HistoryDropOrder` returns the list of entity types (as zero-value instances) that should be deleted during history pruning. The block entity must come first: a consumer that finds the block row treats the range as covered, so the row must not outlive the transactions and events it vouches for. A foreign key onto the block table, if you declare one, must be `ON DELETE CASCADE`, which also makes each batch atomic. When `history_drop` is enabled the framework refuses an empty order or one that does not start with the block table.
+`HistoryDropOrder` returns the list of entity types (as zero-value instances) that should be deleted during history pruning. The block entity must come first: a consumer that finds the block row treats the range as covered, so the row must not outlive the transactions and events it vouches for. A foreign key onto the block table, if you declare one, must be `ON DELETE CASCADE`, which also makes each batch atomic. When `history_drop` is enabled the framework refuses an empty order or one that does not start with the block table. It also refuses an entity with a soft-delete field such as `gorm.DeletedAt`: the drop deletes rows physically, and gorm would otherwise rewrite it into an update that marks rows and prunes nothing.
 
 Each entity returned by `HistoryDropOrder` must implement `database.Deletable`:
 

@@ -3,7 +3,6 @@ package database
 import (
 	"fmt"
 	"strings"
-	"sync"
 
 	"gorm.io/gorm/clause"
 	"gorm.io/gorm/schema"
@@ -26,9 +25,9 @@ var skipConflict = clause.OnConflict{DoNothing: true}
 // The update set comes from the schema, not the rows: gorm's UpdateAll set omits
 // every column no row in the current batch populates, freezing it.
 func conflictClause(namer schema.Namer, model any) (clause.OnConflict, string, error) {
-	s, err := schema.Parse(model, &sync.Map{}, namer)
+	s, err := parseSchema(namer, model)
 	if err != nil {
-		return clause.OnConflict{}, "", fmt.Errorf("failed to parse entity schema: %w", err)
+		return clause.OnConflict{}, "", err
 	}
 
 	// PostgreSQL needs a conflict target to update, and the primary key is the

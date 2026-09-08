@@ -159,8 +159,7 @@ func blockTimestampField[B Block](namer schema.Namer, b B) (string, error) {
 }
 
 // validateHistoryDropOrder checks the order the block entity declares for the
-// drop: non-empty, with the block table first. A block row is the consumer's
-// coverage token, so it must not outlive the rows it vouches for.
+// drop: non-empty, block table first, no soft-delete entity.
 func validateHistoryDropOrder[B Block](namer schema.Namer, b B) error {
 	order := b.HistoryDropOrder()
 	if len(order) == 0 {
@@ -172,32 +171,62 @@ func validateHistoryDropOrder[B Block](namer schema.Namer, b B) error {
 		return err
 	}
 
+	blockPos := -1
+
 	for i, entity := range order {
-		table, err := tableName(namer, entity)
+		s, err := parseSchema(namer, entity)
 		if err != nil {
 			return err
 		}
 
-		if table != blockTable {
-			continue
+		if field := softDeleteField(s); field != "" {
+			return fmt.Errorf("HistoryDropOrder entity %q field %q soft-deletes: the history drop deletes rows physically, "+
+				"and gorm would rewrite it into an update that prunes nothing", s.Table, field)
 		}
 
-		if i != 0 {
-			return fmt.Errorf("HistoryDropOrder must list the block table %q first, found it at position %d: "+
-				"a block row must not outlive its transactions", blockTable, i)
+		if s.Table == blockTable && blockPos < 0 {
+			blockPos = i
 		}
-
-		return nil
 	}
 
-	return fmt.Errorf("HistoryDropOrder does not include the block table %q", blockTable)
+	switch {
+	case blockPos < 0:
+		return fmt.Errorf("HistoryDropOrder does not include the block table %q", blockTable)
+	case blockPos != 0:
+		return fmt.Errorf("HistoryDropOrder must list the block table %q first, found it at position %d: "+
+			"a block row must not outlive its transactions", blockTable, blockPos)
+	}
+
+	return nil
+}
+
+// softDeleteField names the field gorm derives delete clauses from
+// (gorm.DeletedAt in practice); empty for an entity that hard-deletes.
+func softDeleteField(s *schema.Schema) string {
+	for _, f := range s.Fields {
+		if _, ok := reflect.New(f.IndirectFieldType).Interface().(schema.DeleteClausesInterface); ok {
+			return f.Name
+		}
+	}
+
+	return ""
+}
+
+// parseSchema resolves a model's gorm schema.
+func parseSchema(namer schema.Namer, model any) (*schema.Schema, error) {
+	s, err := schema.Parse(model, &sync.Map{}, namer)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse entity schema: %w", err)
+	}
+
+	return s, nil
 }
 
 // tableName resolves the table a model maps to.
 func tableName(namer schema.Namer, model any) (string, error) {
-	s, err := schema.Parse(model, &sync.Map{}, namer)
+	s, err := parseSchema(namer, model)
 	if err != nil {
-		return "", fmt.Errorf("failed to parse entity schema: %w", err)
+		return "", err
 	}
 
 	return s.Table, nil

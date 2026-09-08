@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 // txFirstBlock declares the fail-unsafe order: its transactions go first.
@@ -39,6 +40,40 @@ func (b soloBlock) GetTimestamp() uint64          { return b.Timestamp }
 func (b soloBlock) TimestampField() string        { return "timestamp" }
 func (b soloBlock) HistoryDropOrder() []Deletable { return []Deletable{soloBlock{}} }
 
+// softDeleteTx carries gorm's soft-delete field, which turns DELETE into UPDATE.
+type softDeleteTx struct {
+	Hash      string `gorm:"primaryKey;type:varchar(64)"`
+	Timestamp uint64 `gorm:"index"`
+	DeletedAt gorm.DeletedAt
+}
+
+func (t softDeleteTx) TimestampField() string { return "timestamp" }
+
+// softDeleteTxBlock lists a soft-delete transaction entity after itself.
+type softDeleteTxBlock struct {
+	Hash      string `gorm:"primaryKey;type:varchar(64)"`
+	Timestamp uint64 `gorm:"index"`
+}
+
+func (b softDeleteTxBlock) GetBlockNumber() uint64 { return 0 }
+func (b softDeleteTxBlock) GetTimestamp() uint64   { return b.Timestamp }
+func (b softDeleteTxBlock) TimestampField() string { return "timestamp" }
+func (b softDeleteTxBlock) HistoryDropOrder() []Deletable {
+	return []Deletable{softDeleteTxBlock{}, softDeleteTx{}}
+}
+
+// softDeleteBlock is itself soft-deleted: its coverage rows would never go.
+type softDeleteBlock struct {
+	Hash      string `gorm:"primaryKey;type:varchar(64)"`
+	Timestamp uint64 `gorm:"index"`
+	DeletedAt gorm.DeletedAt
+}
+
+func (b softDeleteBlock) GetBlockNumber() uint64        { return 0 }
+func (b softDeleteBlock) GetTimestamp() uint64          { return b.Timestamp }
+func (b softDeleteBlock) TimestampField() string        { return "timestamp" }
+func (b softDeleteBlock) HistoryDropOrder() []Deletable { return []Deletable{softDeleteBlock{}} }
+
 func TestValidateHistoryDropOrder(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -72,6 +107,16 @@ func TestValidateHistoryDropOrder(t *testing.T) {
 			name:     "transactions first",
 			validate: func() error { return validateHistoryDropOrder(testNamer(), txFirstBlock{}) },
 			wantErr:  "must list the block table",
+		},
+		{
+			name:     "soft-delete transaction entity",
+			validate: func() error { return validateHistoryDropOrder(testNamer(), softDeleteTxBlock{}) },
+			wantErr:  `"soft_delete_txes" field "DeletedAt" soft-deletes`,
+		},
+		{
+			name:     "soft-delete block entity",
+			validate: func() error { return validateHistoryDropOrder(testNamer(), softDeleteBlock{}) },
+			wantErr:  `"soft_delete_blocks" field "DeletedAt" soft-deletes`,
 		},
 	}
 
