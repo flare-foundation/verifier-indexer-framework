@@ -55,7 +55,7 @@ func writeUnitConfig(t *testing.T, extra string) string {
 	t.Helper()
 
 	cfgFile := filepath.Join(t.TempDir(), "config.toml")
-	body := "[indexer]\nconfirmations = 1\n\n[db]\nport = 59999\n" + extra
+	body := "[indexer]\nconfirmations = 1\n\n[db]\nport = 59999\nusername = \"unit\"\ndb_name = \"unit\"\n" + extra
 	require.NoError(t, os.WriteFile(cfgFile, []byte(body), 0o600))
 
 	return cfgFile

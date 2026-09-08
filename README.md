@@ -355,9 +355,9 @@ Full reference:
 [db]
 host = "localhost"                  # PostgreSQL host (default: "localhost")
 port = 5432                         # PostgreSQL port (default: 5432)
-username = ""                       # DB username
+username = ""                       # Required. DB username
 password = ""                       # DB password
-db_name = ""                        # DB name
+db_name = ""                        # Required. An empty name would let the server pick the database
 max_open_conns = 25                 # Max open connections (default: 25)
 max_idle_conns = 5                  # Max idle connections (default: 5)
 conn_max_lifetime_seconds = 300     # Connection max lifetime (default: 300)

@@ -11,6 +11,7 @@ import (
 func TestCheckParameters(t *testing.T) {
 	validBase := func() *Base {
 		return &Base{
+			DB: DB{Username: "indexer", DBName: "indexer"},
 			Indexer: Indexer{
 				Confirmations:  1,
 				MaxBlockRange:  100,
@@ -31,6 +32,18 @@ func TestCheckParameters(t *testing.T) {
 		cfg := validBase()
 		cfg.Indexer.Confirmations = 0
 		require.Error(t, CheckParameters(cfg))
+	})
+
+	t.Run("empty db_name", func(t *testing.T) {
+		cfg := validBase()
+		cfg.DB.DBName = ""
+		require.ErrorContains(t, CheckParameters(cfg), "db_name")
+	})
+
+	t.Run("empty username", func(t *testing.T) {
+		cfg := validBase()
+		cfg.DB.Username = ""
+		require.ErrorContains(t, CheckParameters(cfg), "username")
 	})
 
 	t.Run("zero max concurrency", func(t *testing.T) {
@@ -176,6 +189,7 @@ func TestDecodeReportsUnknownKeys(t *testing.T) {
 func TestCheckHealth(t *testing.T) {
 	validHealth := func() *Base {
 		return &Base{
+			DB:      DB{Username: "indexer", DBName: "indexer"},
 			Indexer: Indexer{Confirmations: 12, MaxBlockRange: 100, MaxConcurrency: 4},
 			Timeout: TimeoutConfig{BackoffMaxElapsedTimeSeconds: 300, RequestTimeoutMillis: 3000},
 			Health:  defaultHealth,

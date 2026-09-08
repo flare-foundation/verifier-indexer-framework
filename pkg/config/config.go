@@ -191,6 +191,15 @@ func CheckParameters(cfg *Base) error {
 		return fmt.Errorf("connection_params must be in URL query syntax (key=value&key=value): %w", err)
 	}
 
+	// an empty name lets the server pick a database, silently
+	if cfg.DB.DBName == "" {
+		return errors.New("db_name must be set")
+	}
+
+	if cfg.DB.Username == "" {
+		return errors.New("username must be set")
+	}
+
 	if cfg.Indexer.Confirmations == 0 {
 		return errors.New("number of confirmations should be set to a positive integer")
 	}
