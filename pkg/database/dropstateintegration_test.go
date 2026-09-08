@@ -46,7 +46,10 @@ func dropTestDB(t *testing.T) *DB[dropBlock, struct{}, struct{}] {
 		require.NoError(t, g.Migrator().DropTable(&dropBlock{}))
 	})
 
-	return &DB[dropBlock, struct{}, struct{}]{g: g, log: logger.Nop{}}
+	conflicts, err := deriveConflicts[dropBlock, struct{}, struct{}](g, logger.Nop{})
+	require.NoError(t, err)
+
+	return &DB[dropBlock, struct{}, struct{}]{g: g, log: logger.Nop{}, conflicts: &conflicts}
 }
 
 // seedState writes the singleton state row the drop updates and returns it.

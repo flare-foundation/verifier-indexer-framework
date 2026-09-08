@@ -56,15 +56,31 @@ func (m *mockDB) SaveAllEntities(
 
 	stateCopy := *state
 	m.states = append(m.states, &stateCopy)
-	m.applyIndexingSave(state)
+	m.applyIndexingSave(state, blocks)
 
 	return nil
 }
 
 // applyIndexingSave mirrors indexingStateAssignments: the loop's own progress
 // columns are written, the first-indexed boundary is established only from the
-// empty sentinel, and last_history_drop belongs to the history drop.
-func (m *mockDB) applyIndexingSave(state *database.State) {
+// empty sentinel (at the lowest block of a save that carries blocks), and
+// last_history_drop belongs to the history drop.
+func (m *mockDB) applyIndexingSave(state *database.State, blocks []*dbBlock) {
+	row := *state
+	if len(blocks) != 0 {
+		low := blocks[0]
+		for _, b := range blocks[1:] {
+			if b.GetBlockNumber() < low.GetBlockNumber() {
+				low = b
+			}
+		}
+
+		row.FirstIndexedBlockNumber = low.GetBlockNumber()
+		row.FirstIndexedBlockTimestamp = low.GetTimestamp()
+	}
+
+	state = &row
+
 	if m.stored == nil {
 		stored := *state
 		m.stored = &stored

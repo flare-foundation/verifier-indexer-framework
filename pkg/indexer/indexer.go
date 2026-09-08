@@ -53,9 +53,8 @@ type BlockchainClient[B database.Block, T database.Transaction, E database.Event
 // may also satisfy StateSaver and ChainTipSaver; the framework's own does.
 type DB[B database.Block, T database.Transaction, E database.Event] interface {
 	// SaveAllEntities persists blocks, transactions, events, and state atomically.
-	// It establishes the first-indexed boundary only from the empty sentinel and
-	// never lowers it, so a regular save cannot overwrite a boundary a concurrent
-	// history drop raised.
+	// It may only raise the first-indexed boundary, and only from the empty
+	// sentinel, so a regular save never undoes a concurrent history drop.
 	SaveAllEntities(
 		ctx context.Context,
 		blocks []*B,

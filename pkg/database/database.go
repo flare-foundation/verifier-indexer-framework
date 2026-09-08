@@ -258,13 +258,9 @@ func (db *DB[B, T, E]) GetState(ctx context.Context) (*State, error) {
 // current code leaves empty is reset to its default. An entity the schema does
 // not let the framework overwrite keeps v1.1.1's skip (New warns at startup).
 //
-// The state row is upserted so the indexing loop only ever writes the columns
-// it owns. On conflict it updates the chain- and last-indexed-progress columns
-// and establishes the first-indexed boundary only from the empty sentinel
-// (raise-only), never lowering an already-set boundary and never touching
-// last_history_drop. This keeps a regular save from clobbering a boundary that
-// a concurrent history drop raised (and persisted) before deleting rows below
-// it; callers holding the authoritative boundary use SaveState instead.
+// The state row is upserted with indexingStateAssignments, so the loop writes
+// only the columns it owns and can only raise the first-indexed boundary;
+// callers holding the authoritative boundary use SaveState instead.
 func (db *DB[B, T, E]) SaveAllEntities(
 	ctx context.Context, blocks []*B, transactions []*T, events []*E, state *State,
 ) error {
@@ -297,10 +293,19 @@ func (db *DB[B, T, E]) SaveAllEntities(
 		}
 
 		if state != nil {
+			row := *state
+
+			fromBatch := len(blocks) != 0
+			if fromBatch {
+				low := lowestBlock(blocks)
+				row.FirstIndexedBlockNumber = low.GetBlockNumber()
+				row.FirstIndexedBlockTimestamp = low.GetTimestamp()
+			}
+
 			err := tx.Clauses(clause.OnConflict{
 				Columns:   []clause.Column{{Name: "id"}},
-				DoUpdates: indexingStateAssignments(db.stateTable()),
-			}).Create(state).Error
+				DoUpdates: indexingStateAssignments(db.stateTable(), fromBatch),
+			}).Create(&row).Error
 			if err != nil {
 				return err
 			}
@@ -310,6 +315,19 @@ func (db *DB[B, T, E]) SaveAllEntities(
 	})
 }
 
+// lowestBlock returns the block with the smallest number; a batch is not
+// assumed ordered.
+func lowestBlock[B Block](blocks []*B) B {
+	low := *blocks[0]
+	for _, b := range blocks[1:] {
+		if (*b).GetBlockNumber() < low.GetBlockNumber() {
+			low = *b
+		}
+	}
+
+	return low
+}
+
 // indexingStateAssignments returns the ON CONFLICT update set used by the
 // indexing loop for the singleton state row. It writes the chain- and
 // last-indexed-progress columns the loop owns, raises the first-indexed
@@ -317,15 +335,22 @@ func (db *DB[B, T, E]) SaveAllEntities(
 // never overwrite a higher boundary persisted by a concurrent history drop),
 // and deliberately omits last_history_drop, which the history drop owns.
 //
+// fromBatch marks a save whose first-indexed columns hold the lowest block it
+// writes in the same transaction. That row exists whatever a concurrent drop
+// did, so the save may establish the boundary unconditionally. A state-only
+// save has nothing to vouch for and may establish only while its view of the
+// drop is current; a drop empties the boundary before deleting and stamps
+// last_history_drop only after, so during the window a stale save would
+// otherwise resurrect the pre-drop boundary through the empty sentinel.
+//
 // The first-indexed CASE qualifies the existing-row reference with the "states"
 // table name (the gorm-derived table for State): inside ON CONFLICT DO UPDATE an
 // unqualified column is ambiguous between the target row and excluded.
-func indexingStateAssignments(table string) clause.Set {
-	// The boundary is establishable only while the caller's view of the drop is
-	// current: a save carrying a pre-drop boundary would otherwise resurrect it
-	// through the empty sentinel a drop had just written.
-	establishable := fmt.Sprintf(
-		"%[1]s.first_indexed_block_number = 0 AND %[1]s.last_history_drop = excluded.last_history_drop", table)
+func indexingStateAssignments(table string, fromBatch bool) clause.Set {
+	establishable := fmt.Sprintf("%s.first_indexed_block_number = 0", table)
+	if !fromBatch {
+		establishable += fmt.Sprintf(" AND %s.last_history_drop = excluded.last_history_drop", table)
+	}
 
 	return clause.Assignments(map[string]any{
 		"last_chain_block_number":      gorm.Expr("excluded.last_chain_block_number"),
