@@ -68,7 +68,7 @@ func retryWithBackoff[B database.Block, T database.Transaction, E database.Event
 		},
 		bwb.newBackoff(ctx),
 		func(err error, d time.Duration) {
-			bwb.log.Errorf("%s error: %v. Will retry after %v", opName, err, d)
+			bwb.log.Warnf("%s error: %v. Will retry after %v", opName, err, d)
 		},
 	)
 	if err != nil {

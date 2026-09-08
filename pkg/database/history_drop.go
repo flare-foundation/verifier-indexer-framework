@@ -34,6 +34,9 @@ func (db *DB[B, T, E]) DropHistoryIteration(
 
 	deleteStart := lastBlockTime - intervalSeconds
 	newState := *state
+	started := time.Now()
+
+	var deleted int64
 
 	var b B
 	if err := db.raiseFirstIndexedBoundary(ctx, b, &newState, deleteStart); err != nil {
@@ -42,9 +45,12 @@ func (db *DB[B, T, E]) DropHistoryIteration(
 
 	// Blocks first, as New validated: a block row is the consumer's coverage token and must not outlive its transactions.
 	for _, entity := range b.HistoryDropOrder() {
-		if err := deleteInBatches(ctx, db.g, deleteStart, entity); err != nil {
+		n, err := deleteInBatches(ctx, db.g, deleteStart, entity)
+		if err != nil {
 			return nil, err
 		}
+
+		deleted += n
 	}
 
 	var firstBlock B
@@ -72,9 +78,9 @@ func (db *DB[B, T, E]) DropHistoryIteration(
 	}
 
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		db.log.Infof("deleted every block older than %d, none remain", deleteStart)
+		db.log.Infof("history drop deleted %d rows in %s: every block older than %d, none remain", deleted, time.Since(started).Round(time.Millisecond), deleteStart)
 	} else {
-		db.log.Infof("deleted blocks up to index %d", newState.FirstIndexedBlockNumber)
+		db.log.Infof("history drop deleted %d rows in %s, first indexed block now %d", deleted, time.Since(started).Round(time.Millisecond), newState.FirstIndexedBlockNumber)
 	}
 
 	return &newState, nil
@@ -256,16 +262,18 @@ var validColumnName = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 // is older than deleteStart, processing up to deleteBatchSize rows per statement.
 // Postgres does not support LIMIT on DELETE (gorm silently drops it), so the
 // batch is selected by ctid in a subquery.
-func deleteInBatches(ctx context.Context, db *gorm.DB, deleteStart uint64, entity Deletable) error {
+func deleteInBatches(ctx context.Context, db *gorm.DB, deleteStart uint64, entity Deletable) (int64, error) {
 	col, err := validColumn(entity.TimestampField())
 	if err != nil {
-		return err
+		return 0, err
 	}
+
+	var deleted int64
 
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return deleted, ctx.Err()
 		default:
 		}
 
@@ -281,11 +289,13 @@ func deleteInBatches(ctx context.Context, db *gorm.DB, deleteStart uint64, entit
 			Delete(entity)
 
 		if result.Error != nil {
-			return fmt.Errorf("failed to delete historic data in the DB: %w", result.Error)
+			return deleted, fmt.Errorf("failed to delete historic data in the DB: %w", result.Error)
 		}
 
 		if result.RowsAffected == 0 {
-			return nil
+			return deleted, nil
 		}
+
+		deleted += result.RowsAffected
 	}
 }

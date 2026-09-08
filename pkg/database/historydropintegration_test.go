@@ -66,7 +66,8 @@ func TestDeleteInBatches(t *testing.T) {
 	capture := &sqlCapture{}
 	session := db.Session(&gorm.Session{Logger: capture})
 
-	require.NoError(t, deleteInBatches(context.Background(), session, 500, prunable{}))
+	_, err = deleteInBatches(context.Background(), session, 500, prunable{})
+	require.NoError(t, err)
 
 	var remaining int64
 	require.NoError(t, db.Model(&prunable{}).Count(&remaining).Error)

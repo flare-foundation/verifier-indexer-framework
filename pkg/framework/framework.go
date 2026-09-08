@@ -138,6 +138,8 @@ func runWithArgs[B database.Block, C config.EnvOverrideable, T database.Transact
 		return err
 	}
 
+	log.Info("indexer shutting down")
+
 	return nil
 }
 

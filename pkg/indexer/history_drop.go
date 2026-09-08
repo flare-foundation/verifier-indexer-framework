@@ -15,16 +15,7 @@ func (ix *Indexer[B, T, E]) shouldRunHistoryDrop(state *database.State) bool {
 		return false
 	}
 
-	if state.LastChainBlockTimestamp-state.LastHistoryDrop >= ix.historyDropFrequency {
-		ix.log.Debugf(
-			"history drop should run: last drop %d, last block %d, frequency %d",
-			state.LastHistoryDrop, state.LastChainBlockTimestamp, ix.historyDropFrequency,
-		)
-
-		return true
-	}
-
-	return false
+	return state.LastChainBlockTimestamp-state.LastHistoryDrop >= ix.historyDropFrequency
 }
 
 // runHistoryDrop executes a single history drop iteration, deleting blocks older
@@ -32,7 +23,13 @@ func (ix *Indexer[B, T, E]) shouldRunHistoryDrop(state *database.State) bool {
 func (ix *Indexer[B, T, E]) runHistoryDrop(
 	ctx context.Context, state *database.State,
 ) (*database.State, error) {
-	ix.log.Debugf("running history drop")
+	// guarded like DropHistoryIteration: a chain younger than the interval would wrap
+	var cutoff uint64
+	if state.LastChainBlockTimestamp > ix.historyDropInterval {
+		cutoff = state.LastChainBlockTimestamp - ix.historyDropInterval
+	}
+
+	ix.log.Infof("history drop started, deleting blocks older than %d", cutoff)
 
 	return ix.db.DropHistoryIteration(
 		ctx, state, ix.historyDropInterval, state.LastChainBlockTimestamp,

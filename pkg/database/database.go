@@ -87,8 +87,6 @@ func New[B Block, T Transaction, E Event](cfg *config.DB, entities ExternalEntit
 		}
 	}
 
-	log.Debug("connected to the DB")
-
 	// before drop_table_at_start: a second instance must not touch a live database
 	if cfg.WriterLock {
 		lock, err = acquireWriterLock(db, time.Duration(cfg.WriterLockWaitSeconds)*time.Second, log)
@@ -122,7 +120,7 @@ func New[B Block, T Transaction, E Event](cfg *config.DB, entities ExternalEntit
 		return nil, fmt.Errorf("failed to auto-migrate tables: %w", err)
 	}
 
-	log.Debug("migrated DB entities")
+	log.Infof("connected to database %s:%d/%s and migrated its tables", cfg.Host, cfg.Port, cfg.DBName)
 
 	conflicts, err := deriveConflicts[B, T, E](db, log)
 	if err != nil {

@@ -80,6 +80,8 @@ type checker struct {
 	cached   Report
 	cachedAt time.Time
 	hasCache bool
+	// unavailable makes the read failure log once per outage, not once per probe
+	unavailable bool
 }
 
 var _ http.Handler = &checker{}
@@ -185,10 +187,19 @@ func (c *checker) evaluate(ctx context.Context) Report {
 
 	state, err := c.source.GetState(queryCtx)
 	if err != nil {
-		c.log.Errorf("health: failed to read indexer state: %v", err)
+		if !c.unavailable {
+			c.log.Warnf("health: failed to read indexer state: %v", err)
+			c.unavailable = true
+		}
+
 		report.Status = StatusUnavailable
 
 		return report
+	}
+
+	if c.unavailable {
+		c.log.Info("health: indexer state readable again")
+		c.unavailable = false
 	}
 
 	report.FirstIndexedBlockNumber = state.FirstIndexedBlockNumber

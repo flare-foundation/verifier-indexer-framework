@@ -180,8 +180,10 @@ func warnLegacyDB[B database.Block, T database.Transaction, E database.Event](cf
 type Indexer[B database.Block, T database.Transaction, E database.Event] struct {
 	blockchain BlockchainClient[B, T, E]
 	// rawBlockchain is the unretried client, kept for the v1.1.1 start-block search.
-	rawBlockchain         BlockchainClient[B, T, E]
-	requestTimeout        time.Duration
+	rawBlockchain  BlockchainClient[B, T, E]
+	requestTimeout time.Duration
+	// upToDate makes the quiet-poll line fire once per stretch of nothing to do
+	upToDate              bool
 	confirmations         uint64
 	db                    DB[B, T, E]
 	maxBlockRange         uint64
@@ -217,7 +219,6 @@ func (ix *Indexer[B, T, E]) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			ix.log.Info("indexer shutting down")
 			return ctx.Err()
 		default:
 		}
@@ -314,8 +315,6 @@ func (ix *Indexer[B, T, E]) runIteration(
 	historyDropResults chan *database.State,
 	upToDateBackoff *backoff.ExponentialBackOff,
 ) (*database.State, error) {
-	ix.log.Debug("starting indexer iteration")
-
 	err := backoff.RetryNotify(
 		func() error {
 			newState, err := ix.updateChainState(ctx, state)
@@ -328,13 +327,12 @@ func (ix *Indexer[B, T, E]) runIteration(
 				return fmt.Errorf("failed to persist chain tip: %w", err)
 			}
 
-			ix.log.Debugf("updated chain state: %+v", newState)
 			state = newState
 			return nil
 		},
 		ix.newBackoff(ctx),
 		func(err error, d time.Duration) {
-			ix.log.Errorf("indexer update chain state error: %v. Will retry after %v", err, d)
+			ix.log.Warnf("indexer update chain state error: %v. Will retry after %v", err, d)
 		},
 	)
 	if err != nil {
@@ -355,7 +353,10 @@ func (ix *Indexer[B, T, E]) runIteration(
 			}
 
 			if results == nil {
-				ix.log.Debug("no new blocks to index, indexer is up to date")
+				if !ix.upToDate {
+					ix.log.Debugf("no new blocks to index, up to date at chain block %d", state.LastChainBlockNumber)
+					ix.upToDate = true
+				}
 				nextInterval := upToDateBackoff.NextBackOff()
 
 				select {
@@ -368,20 +369,20 @@ func (ix *Indexer[B, T, E]) runIteration(
 			}
 
 			upToDateBackoff.Reset()
+			ix.upToDate = false
 
 			err = ix.saveData(ctx, results)
 			if err != nil {
 				return err
 			}
 
-			ix.log.Infof("successfully processed up to block %d", results.state.LastIndexedBlockNumber)
 			state = results.state
 
 			return nil
 		},
 		ix.newBackoff(ctx),
 		func(err error, d time.Duration) {
-			ix.log.Errorf("indexer iteration error: %v. Will retry after %v", err, d)
+			ix.log.Warnf("indexer iteration error: %v. Will retry after %v", err, d)
 		},
 	)
 	if err != nil {
@@ -436,7 +437,7 @@ func (ix *Indexer[B, T, E]) maybeRunHistoryDrop(
 			},
 			ix.newBackoff(ctx),
 			func(err error, d time.Duration) {
-				ix.log.Errorf("indexer history drop error: %v. Will retry after %v", err, d)
+				ix.log.Warnf("indexer history drop error: %v. Will retry after %v", err, d)
 			},
 		)
 		if err != nil {
@@ -468,7 +469,6 @@ func (ix *Indexer[B, T, E]) pollHistoryDropResults(
 			return errors.New("history drop failed")
 		}
 
-		ix.log.Debugf("history drop completed, new state: %+v", newState)
 		state.LastHistoryDrop = newState.LastHistoryDrop
 		ix.mergeFirstIndexed(state, newState)
 
@@ -520,15 +520,8 @@ func (ix *Indexer[B, T, E]) getIterationResults(
 ) (*iterationResult[B, T, E], error) {
 	blkRange := ix.getBlockRange(state)
 
-	switch blkRange.len() {
-	case 0:
+	if blkRange.len() == 0 {
 		return nil, nil
-
-	case 1:
-		ix.log.Debugf("indexing block %d, latest block on chain %d", blkRange.start, state.LastChainBlockNumber)
-
-	default:
-		ix.log.Debugf("indexing from block %d to %d, latest block on chain %d", blkRange.start, blkRange.end-1, state.LastChainBlockNumber)
 	}
 
 	blockResults, err := ix.getBlockResults(ctx, blkRange)
@@ -666,14 +659,23 @@ func (ix *Indexer[B, T, E]) saveData(ctx context.Context, results *iterationResu
 		}
 	}
 
-	ix.log.Debugf("fetched %d blocks with %d transactions from the chain", len(results.blockResults), len(transactions))
-
 	err := ix.db.SaveAllEntities(ctx, blocks, transactions, events, results.state)
 	if err != nil {
 		return fmt.Errorf("failed to save entities to database: %w", err)
 	}
 
-	ix.log.Debug("data saved to the DB")
+	if len(blocks) == 0 {
+		return nil
+	}
+
+	first, last := (*blocks[0]).GetBlockNumber(), results.state.LastIndexedBlockNumber
+	if first == last {
+		ix.log.Infof("indexed block %d with %d transactions, chain head %d",
+			first, len(transactions), results.state.LastChainBlockNumber)
+	} else {
+		ix.log.Infof("indexed blocks %d to %d with %d transactions, chain head %d",
+			first, last, len(transactions), results.state.LastChainBlockNumber)
+	}
 
 	return nil
 }
