@@ -65,9 +65,10 @@ type ExampleConfig struct{}
 func (c *ExampleConfig) ApplyEnvOverrides() error { return nil }
 
 // dbBlock is the example block entity. Entities need a primary key: it is the
-// conflict target rows are overwritten on.
+// conflict target rows are overwritten on. autoIncrement:false keeps gorm from
+// making a sole integer key a sequence, which would write block 0 as DEFAULT.
 type dbBlock struct {
-	BlockNumber uint64 `gorm:"primaryKey"`
+	BlockNumber uint64 `gorm:"primaryKey;autoIncrement:false"`
 	Timestamp   uint64 `gorm:"index"`
 }
 

@@ -245,7 +245,7 @@ Any struct with GORM tags.
 There is no required interface — `database.Transaction` is defined as `any`.
 The framework stores these in batches alongside their parent blocks.
 
-**Declare a primary key that is the entity's deterministic chain identity** (a hash or block number), not a generated sequence. Rows are overwritten on primary-key conflict, so re-indexing a range repairs values derived by older code. Two consequences worth knowing:
+**Declare a primary key that is the entity's deterministic chain identity** (a hash or block number), not a generated sequence. A sole integer key needs `autoIncrement:false`, or gorm makes it a sequence and writes block 0 as `DEFAULT`. Rows are overwritten on primary-key conflict, so re-indexing a range repairs values derived by older code. Two consequences worth knowing:
 
 - Rows must be unique by primary key *within* a single save, or PostgreSQL rejects the whole batch.
 - An entity without a primary key, or with a unique constraint the primary key cannot arbitrate (a sequence id next to a unique hash, say), keeps v1.1.1's behaviour: conflicting rows are skipped and never repaired. The framework warns about such entities at startup.
