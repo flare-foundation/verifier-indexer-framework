@@ -342,3 +342,49 @@ func TestReadIsSafeForConcurrentRequests(t *testing.T) {
 
 	wg.Wait()
 }
+
+// contextSource fails only when the context handed to it is already done, the
+// way a real query does once the client has gone.
+type contextSource struct {
+	state database.State
+}
+
+func (s *contextSource) GetState(ctx context.Context) (*database.State, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	state := s.state
+
+	return &state, nil
+}
+
+// TestClientCancellationDoesNotPoisonTheCache issues a probe whose client has
+// already gone, then a healthy one inside the TTL: the second must not inherit
+// the first client's cancellation.
+func TestClientCancellationDoesNotPoisonTheCache(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	source := &contextSource{state: database.State{
+		FirstIndexedBlockNumber: 1,
+		LastIndexedBlockNumber:  100,
+		LastChainBlockNumber:    112,
+		LastIndexedBlockUpdated: uint64(now.Unix()) - 10,
+		LastChainBlockUpdated:   uint64(now.Unix()) - 10,
+	}}
+
+	opts := testOptions()
+	opts.CacheTTL = time.Second
+
+	c := newTestChecker(t, source, opts, now)
+
+	gone, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	first := httptest.NewRecorder()
+	c.ServeHTTP(first, httptest.NewRequestWithContext(gone, http.MethodGet, "/health", nil))
+	require.Equal(t, http.StatusOK, first.Code, "a departed client must not turn the verdict into a failure")
+
+	second := httptest.NewRecorder()
+	c.ServeHTTP(second, httptest.NewRequest(http.MethodGet, "/health", nil))
+	require.Equal(t, http.StatusOK, second.Code, "the next caller must not be served the departed client's cancellation")
+}

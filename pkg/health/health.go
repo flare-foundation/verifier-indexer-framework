@@ -125,7 +125,9 @@ func (c *checker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	report := c.read(r.Context())
+	// A client that hangs up says nothing about the database, so its cancellation
+	// must not be cached for everyone else; QueryTimeout still bounds the read.
+	report := c.read(context.WithoutCancel(r.Context()))
 
 	// Marshalled before the status is written so a failure cannot commit a 200
 	// with a truncated body.
