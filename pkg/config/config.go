@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 
 	"github.com/BurntSushi/toml"
 	"github.com/caarlos0/env/v11"
@@ -75,6 +76,10 @@ type DB struct {
 	WriterLock bool `toml:"writer_lock"`
 	// WriterLockWaitSeconds bounds the wait for another indexer to exit.
 	WriterLockWaitSeconds int `toml:"writer_lock_wait_seconds"`
+	// ConnectionParams is appended to the connection string in URL query
+	// syntax, e.g. "sslmode=verify-full&application_name=xrp-indexer". A string
+	// rather than a table keeps the config comparable, as on v1.1.1.
+	ConnectionParams string `toml:"connection_params"`
 }
 
 var defaultDB = DB{
@@ -180,6 +185,10 @@ func CheckParameters(cfg *Base) error {
 	// the lock holds one connection for the life of the process; zero means unlimited
 	if cfg.DB.WriterLock && cfg.DB.MaxOpenConns == 1 {
 		return errors.New("max_open_conns must be at least 2 while writer_lock is on, or 0 for no limit")
+	}
+
+	if _, err := url.ParseQuery(cfg.DB.ConnectionParams); err != nil {
+		return fmt.Errorf("connection_params must be in URL query syntax (key=value&key=value): %w", err)
 	}
 
 	if cfg.Indexer.Confirmations == 0 {

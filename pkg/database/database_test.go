@@ -18,7 +18,22 @@ func TestFormatDSN(t *testing.T) {
 		}
 
 		dsn := formatDSN(cfg)
-		require.Equal(t, "postgres://user:pass@localhost:5432/mydb", dsn)
+		require.Equal(t, "postgres://user:pass@localhost:5432/mydb?default_query_exec_mode=cache_describe", dsn)
+	})
+
+	t.Run("operator parameters are appended and win over the default", func(t *testing.T) {
+		cfg := &config.DB{
+			Host:             "localhost",
+			Port:             5432,
+			Username:         "user",
+			Password:         "pass",
+			DBName:           "mydb",
+			ConnectionParams: "sslmode=verify-full&application_name=xrp indexer&default_query_exec_mode=simple_protocol",
+		}
+
+		dsn := formatDSN(cfg)
+		require.Equal(t, "postgres://user:pass@localhost:5432/mydb"+
+			"?application_name=xrp+indexer&default_query_exec_mode=simple_protocol&sslmode=verify-full", dsn)
 	})
 
 	t.Run("special characters in password", func(t *testing.T) {

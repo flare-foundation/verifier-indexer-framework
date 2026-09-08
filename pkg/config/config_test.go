@@ -245,3 +245,17 @@ func TestWriterLockDefaults(t *testing.T) {
 	require.True(t, decoded.DB.WriterLock)
 	require.Equal(t, 60, decoded.DB.WriterLockWaitSeconds)
 }
+
+func TestConnectionParamsDecode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(path, []byte("[db]\nconnection_params = \"sslmode=require&application_name=xrp-indexer\"\n"), 0644))
+
+	cfg := DefaultBase
+	unknown, err := Decode(path, &cfg)
+	require.NoError(t, err)
+	require.Empty(t, unknown)
+	require.Equal(t, "sslmode=require&application_name=xrp-indexer", cfg.DB.ConnectionParams)
+
+	cfg.DB.ConnectionParams = "sslmode=%zz"
+	require.ErrorContains(t, CheckParameters(&cfg), "connection_params")
+}

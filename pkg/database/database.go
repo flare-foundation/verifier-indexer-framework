@@ -237,13 +237,27 @@ func getGormLogLevel(cfg *config.DB) gormlogger.LogLevel {
 	return gormlogger.Silent
 }
 
-// formatDSN builds a PostgreSQL connection string from the database configuration.
+// formatDSN builds a PostgreSQL connection string from the database
+// configuration. Batch inserts differ in text by their null pattern, so pgx's
+// default statement cache would prepare each one server-side and never reuse
+// it; cache_describe keeps only descriptions, client-side. The schema is only
+// migrated at startup, which is what that mode assumes. Operator parameters
+// are appended and win over the default.
 func formatDSN(cfg *config.DB) string {
+	params := url.Values{"default_query_exec_mode": {"cache_describe"}}
+	// config.CheckParameters has already rejected a string that does not parse
+	if extra, err := url.ParseQuery(cfg.ConnectionParams); err == nil {
+		for key, values := range extra {
+			params[key] = values
+		}
+	}
+
 	u := url.URL{
-		Scheme: "postgres",
-		User:   url.UserPassword(cfg.Username, cfg.Password),
-		Host:   fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
-		Path:   cfg.DBName,
+		Scheme:   "postgres",
+		User:     url.UserPassword(cfg.Username, cfg.Password),
+		Host:     fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
+		Path:     cfg.DBName,
+		RawQuery: params.Encode(),
 	}
 
 	return u.String()

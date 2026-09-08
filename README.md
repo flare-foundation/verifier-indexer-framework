@@ -41,6 +41,7 @@ For an example of how to integrate please see the `cmd/example` directory.
 - Saves build and runtime version metadata.
 - Optionally drops all tables on startup (`drop_table_at_start`).
 - Takes a session advisory lock at startup so a second indexer on the same database fails fast instead of diverging silently (`writer_lock`).
+- Connects with pgx's `cache_describe` exec mode: batch inserts differ in text by their null pattern, and the default mode would prepare each one server-side and never reuse it, holding gigabytes of plans per writing connection. Other connection-string parameters (`sslmode`, `application_name`, `description_cache_capacity`) go in `connection_params`.
 
 ### Indexer Loop (`pkg/indexer`)
 
@@ -364,6 +365,9 @@ log_queries = false                 # Log all SQL queries (default: false)
 drop_table_at_start = false         # Drop and recreate tables on startup (default: false)
 writer_lock = true                  # Refuse to start while another indexer holds this database (default: true)
 writer_lock_wait_seconds = 60       # Wait for the holder to exit before failing (default: 60)
+connection_params = ""              # Appended to the connection string in URL query syntax, e.g.
+                                    # "sslmode=verify-full&application_name=xrp-indexer"; pgx and libpq
+                                    # keys. sslmode defaults to pgx's "prefer": TLS if offered, else plaintext.
 history_drop = 0                    # Delete blocks older than this many seconds; 0 = disabled
 history_drop_frequency = 0          # Seconds between history drops; defaults to history_drop value
 
