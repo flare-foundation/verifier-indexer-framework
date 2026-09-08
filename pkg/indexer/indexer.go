@@ -216,6 +216,12 @@ func (ix *Indexer[B, T, E]) Run(ctx context.Context) error {
 
 	ix.computedStartBlock = startBlockNumber
 
+	if ix.endBlockNumber != 0 && startBlockNumber > ix.endBlockNumber {
+		ix.log.Warnf("end_block_number %d is below the resume point %d: nothing is left to index in the configured window; "+
+			"to re-index a range, roll last_indexed_block_number back with the indexer stopped (see README)",
+			ix.endBlockNumber, startBlockNumber)
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -584,12 +590,17 @@ func (ix *Indexer[B, T, E]) getEndBlock(state *database.State, start uint64) uin
 		return start
 	}
 
-	numBlocks := latestConfirmedNum + 1 - start
-	if numBlocks > ix.maxBlockRange {
-		return start + ix.maxBlockRange
+	end := latestConfirmedNum + 1
+	if end-start > ix.maxBlockRange {
+		end = start + ix.maxBlockRange
 	}
 
-	return latestConfirmedNum + 1
+	// a bounded run must not fetch past its end; an end below start is an empty range
+	if ix.endBlockNumber != 0 && end > ix.endBlockNumber+1 {
+		end = max(ix.endBlockNumber+1, start)
+	}
+
+	return end
 }
 
 // getBlockResults fetches block data for the given range concurrently, bounded

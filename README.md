@@ -36,7 +36,7 @@ For an example of how to integrate please see the `cmd/example` directory.
 
 - Connects to PostgreSQL via GORM.
 - Auto-migrates your block, transaction, and event tables plus internal `state` and `version` tables.
-- Persists blocks, transactions, and events in a single atomic transaction, overwriting existing rows on primary-key conflict (entity rows are deterministically derived from immutable chain data, so re-indexing a range repairs them).
+- Persists blocks, transactions, and events in a single atomic transaction, overwriting existing rows on primary-key conflict (entity rows are deterministically derived from immutable chain data, so re-indexing a range repairs them; see [Re-indexing a Range](#re-indexing-a-range)).
 - Tracks indexer state: last/first indexed block, latest chain head, last history drop timestamp.
 - Saves build and runtime version metadata.
 - Optionally drops all tables on startup (`drop_table_at_start`).
@@ -125,7 +125,7 @@ All blocks in the range are fetched concurrently via `GetBlockResult`, bounded b
 Each call is individually wrapped with a per-request timeout and exponential backoff.
 6. **Persist.**
 The fetched blocks, transactions, events, and updated state are written to the database in a single atomic transaction.
-Rows that already exist are overwritten — entity rows are deterministically derived from immutable chain data, so re-indexing a range repairs values previously derived by older code.
+Rows that already exist are overwritten — entity rows are deterministically derived from immutable chain data, so re-indexing a range (see below) repairs values previously derived by older code.
 7. **Repeat.**
 If a configured `end_block_number` has been reached, the indexer exits.
 Otherwise, it loops back to step 1.
@@ -137,6 +137,17 @@ If any step fails after exhausting retries, the indexer returns a fatal error an
 When the indexer has processed all confirmed blocks, the computed block range is empty.
 Instead of busy-looping, it sleeps with exponential backoff — starting with short pauses and gradually increasing up to a maximum interval.
 As soon as the next iteration detects new confirmed blocks on the chain, the backoff resets and the indexer resumes fetching at full speed.
+
+### Re-indexing a Range
+
+The indexer resumes after the last indexed block and never looks back: `start_block_number` is ignored once anything is indexed, so setting it across an already-indexed range repairs nothing, and the indexer warns at startup when `end_block_number` lies below the resume point.
+To re-index from block N, stop the indexer (the writer lock makes this a hard requirement) and roll the state row back:
+
+```sql
+UPDATE states SET last_indexed_block_number = N - 1 WHERE id = 1;
+```
+
+On restart the indexer refetches from N and overwrites the rows it finds. Set `end_block_number` to bound the run; it stops exactly there. The first-indexed boundary is untouched, and rows older than the retention window are pruned again by the next history drop, so re-indexing below the cutoff is wasted work.
 
 ### History Drop
 
@@ -376,7 +387,7 @@ confirmations = 12                  # Required. Blocks behind chain tip before i
 max_block_range = 1000              # Max blocks per iteration (default: 1000)
 max_concurrency = 8                 # Concurrent block fetch goroutines (default: 8)
 start_block_number = 0              # Block to start indexing from
-end_block_number = 0                # Stop after this block; 0 = run forever
+end_block_number = 0                # Stop after this block, never fetching past it; 0 = run forever
 
 [timeout]
 backoff_max_elapsed_time_seconds = 300   # Max total retry time (default: 300)

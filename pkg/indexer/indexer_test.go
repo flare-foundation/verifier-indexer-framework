@@ -662,12 +662,13 @@ func TestGetInitialStartBlockNumber(t *testing.T) {
 
 func TestGetEndBlock(t *testing.T) {
 	tests := []struct {
-		name          string
-		chainBlock    uint64
-		confirmations uint64
-		start         uint64
-		maxBlockRange uint64
-		expectedEnd   uint64
+		name           string
+		chainBlock     uint64
+		confirmations  uint64
+		start          uint64
+		maxBlockRange  uint64
+		endBlockNumber uint64
+		expectedEnd    uint64
 	}{
 		{
 			name:          "chain tip below confirmations",
@@ -717,14 +718,42 @@ func TestGetEndBlock(t *testing.T) {
 			maxBlockRange: 1000,
 			expectedEnd:   101,
 		},
+		{
+			name:           "range capped by end_block_number",
+			chainBlock:     2000,
+			confirmations:  5,
+			start:          100,
+			maxBlockRange:  1000,
+			endBlockNumber: 550,
+			expectedEnd:    551,
+		},
+		{
+			name:           "end_block_number beyond the range leaves it alone",
+			chainBlock:     2000,
+			confirmations:  5,
+			start:          100,
+			maxBlockRange:  50,
+			endBlockNumber: 550,
+			expectedEnd:    150,
+		},
+		{
+			name:           "resume point past end_block_number is an empty range",
+			chainBlock:     2000,
+			confirmations:  5,
+			start:          600,
+			maxBlockRange:  1000,
+			endBlockNumber: 550,
+			expectedEnd:    600,
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			ix := Indexer[dbBlock, dbTransaction, struct{}]{
-				confirmations: tc.confirmations,
-				maxBlockRange: tc.maxBlockRange,
-				log:           logger.Nop{},
+				confirmations:  tc.confirmations,
+				maxBlockRange:  tc.maxBlockRange,
+				endBlockNumber: tc.endBlockNumber,
+				log:            logger.Nop{},
 			}
 			state := &database.State{
 				LastChainBlockNumber: tc.chainBlock,
